@@ -97,8 +97,9 @@ impl Lexer {
                 line_start = false;
 
                 let end = Position { line, column, offset: i };
-                let is_kw = KEYWORDS.contains(s.to_ascii_uppercase().as_str());
-                tokens.push(Token::new(if is_kw { TokenKind::Keyword } else { TokenKind::Identifier }, s, start, end));
+                let upper = s.to_ascii_uppercase();
+                let is_kw = KEYWORDS.contains(upper.as_str());
+                tokens.push(Token::new(if is_kw { TokenKind::Keyword } else { TokenKind::Identifier }, upper, start, end));
                 continue;
             }
 
@@ -167,6 +168,45 @@ impl Lexer {
                 continue;
             }
 
+            // String templates delimited by |...|
+            if ch == '|' {
+                i += 1;
+                column += 1;
+                let mut val = String::new();
+                let mut closed = false;
+
+                while i < len {
+                    if self.source[i] == '|' {
+                        i += 1;
+                        column += 1;
+                        closed = true;
+                        break;
+                    }
+                    if self.source[i] == '\\' && i + 1 < len {
+                        val.push(self.source[i + 1]);
+                        i += 2;
+                        column += 2;
+                        continue;
+                    }
+                    if self.source[i] == '\n' {
+                        line += 1;
+                        column = 1;
+                    } else {
+                        column += 1;
+                    }
+                    val.push(self.source[i]);
+                    i += 1;
+                }
+
+                line_start = false;
+                let end = Position { line, column, offset: i };
+                if !closed {
+                    self.diagnostics.error("LEX003", "Unterminated string template.", start, end);
+                }
+                tokens.push(Token::new(TokenKind::StringTemplate, val, start, end));
+                continue;
+            }
+
             // Two-character and three-character tokens
             let two: String = self.source[i..].iter().take(2).collect();
             let three: String = self.source[i..].iter().take(3).collect();
@@ -199,7 +239,7 @@ impl Lexer {
             let end = Position { line, column, offset: i };
 
             match ch {
-                '=' | '+' | '-' | '/' | '*' | '<' | '>' | '!' | '&' | '|' => {
+                '=' | '+' | '-' | '/' | '*' | '<' | '>' | '!' | '&' => {
                     tokens.push(Token::new(TokenKind::Operator, ch.to_string(), start, end));
                 }
                 '.' => tokens.push(Token::new(TokenKind::Dot, ch.to_string(), start, end)),
@@ -221,6 +261,75 @@ impl Lexer {
         let eof_pos = Position { line, column, offset: i };
         tokens.push(Token::eof(eof_pos));
 
-        (tokens, self.diagnostics)
+        let unchained = unchain_tokens(tokens);
+        (unchained, self.diagnostics)
     }
+}
+
+pub fn unchain_tokens(raw: Vec<Token>) -> Vec<Token> {
+    let mut out = Vec::with_capacity(raw.len() * 2);
+    let mut prefix = Vec::new();
+    let mut chain_prefix: Option<Vec<Token>> = None;
+    let mut paren_depth = 0;
+    let len = raw.len();
+
+    for i in 0..len {
+        let tok = &raw[i];
+        match tok.kind {
+            TokenKind::LParen | TokenKind::LBracket => {
+                paren_depth += 1;
+                if chain_prefix.is_none() {
+                    prefix.push(tok.clone());
+                }
+                out.push(tok.clone());
+            }
+            TokenKind::RParen | TokenKind::RBracket => {
+                if paren_depth > 0 {
+                    paren_depth -= 1;
+                }
+                if chain_prefix.is_none() {
+                    prefix.push(tok.clone());
+                }
+                out.push(tok.clone());
+            }
+            TokenKind::Colon if paren_depth == 0 && chain_prefix.is_none() => {
+                chain_prefix = Some(prefix.clone());
+            }
+            TokenKind::Comma if paren_depth == 0 && chain_prefix.is_some() => {
+                let is_write = chain_prefix
+                    .as_ref()
+                    .and_then(|p| p.first())
+                    .map(|t| t.upper == "WRITE")
+                    .unwrap_or(false);
+                let next_is_slash = if i + 1 < len { raw[i + 1].lexeme == "/" } else { false };
+
+                if !is_write || next_is_slash {
+                    let dot_pos = tok.end;
+                    out.push(Token::new(TokenKind::Dot, ".".to_string(), tok.start, dot_pos));
+                    if let Some(ref cp) = chain_prefix {
+                        for pt in cp {
+                            out.push(pt.clone());
+                        }
+                    }
+                } else {
+                    out.push(tok.clone());
+                }
+            }
+            TokenKind::Dot if paren_depth == 0 => {
+                out.push(tok.clone());
+                prefix.clear();
+                chain_prefix = None;
+            }
+            TokenKind::EOF => {
+                out.push(tok.clone());
+            }
+            _ => {
+                if chain_prefix.is_none() {
+                    prefix.push(tok.clone());
+                }
+                out.push(tok.clone());
+            }
+        }
+    }
+    out
 }

@@ -227,6 +227,7 @@ pub enum Statement {
         end: Position,
         values: Vec<Expr>,
         groups: Vec<Vec<Expr>>,
+        newline: bool,
     },
     IfStmt {
         start: Position,

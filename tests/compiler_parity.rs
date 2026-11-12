@@ -123,3 +123,42 @@ ENDLOOP.
     let vm = res.vm.expect("VM result should be present");
     assert_eq!(vm.output, vec!["HELLO", "CLOUD"]);
 }
+
+#[test]
+fn test_lexer_unchain_write_colon() {
+    let source = r#"
+REPORT zunchain.
+DATA: lv_a TYPE i VALUE 10, lv_b TYPE i VALUE 20.
+WRITE: / lv_a, / lv_b.
+"#;
+    let mut options = CompileOptions::default();
+    options.run = true;
+    options.mode = Some(LanguageMode::Standard);
+
+    let res = compile_source(source, options);
+    assert!(res.ok, "Unchain test failed: {:?}", res.diagnostics);
+    let vm = res.vm.expect("VM result should be present");
+    assert_eq!(vm.output, vec!["10", "20"]);
+}
+
+#[test]
+fn test_read_table_sy_subrc() {
+    let source = r#"
+REPORT zread_tab.
+DATA lt_items TYPE TABLE OF string.
+APPEND 'ALPHA' TO lt_items.
+APPEND 'BETA' TO lt_items.
+READ TABLE lt_items INDEX 1 INTO DATA(lv_item).
+WRITE: / sy-subrc.
+READ TABLE lt_items INDEX 99 INTO DATA(lv_miss).
+WRITE: / sy-subrc.
+"#;
+    let mut options = CompileOptions::default();
+    options.run = true;
+    options.mode = Some(LanguageMode::Standard);
+
+    let res = compile_source(source, options);
+    assert!(res.ok, "Read table sy-subrc test failed: {:?}", res.diagnostics);
+    let vm = res.vm.expect("VM result should be present");
+    assert_eq!(vm.output, vec!["0", "4"]);
+}

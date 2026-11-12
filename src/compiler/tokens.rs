@@ -8,6 +8,7 @@ pub enum TokenKind {
     Integer,
     Decimal,
     String,
+    StringTemplate,
     Keyword,
     Operator,
     Dot,

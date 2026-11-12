@@ -62,7 +62,7 @@ pub enum Op {
     #[serde(rename = "constructor")]
     Constructor { fields: Vec<String> },
     #[serde(rename = "write")]
-    Write { groups: Vec<usize> },
+    Write { groups: Vec<usize>, newline: bool },
     #[serde(rename = "jump_if_false")]
     JumpIfFalse { target: i64 },
     #[serde(rename = "jump")]
@@ -740,12 +740,13 @@ impl Lowerer {
                     _ => {}
                 }
             }
-            Statement::WriteStmt { values, groups, .. } => {
+            Statement::WriteStmt { values, groups, newline, .. } => {
                 for v in values {
                     self.expr(v);
                 }
                 self.ops.push(Op::Write {
                     groups: groups.iter().map(|g| g.len()).collect(),
+                    newline: *newline,
                 });
             }
             Statement::IfStmt { branches, else_branch, .. } => {
@@ -956,11 +957,17 @@ impl Lowerer {
                 self.expr(value);
                 self.expr(table);
                 self.ops.push(Op::Append);
+                if let Expr::Variable { name, .. } = table {
+                    self.ops.push(Op::Store { name: name.clone() });
+                }
             }
             Statement::InsertStmt { value, table, .. } => {
                 self.expr(value);
                 self.expr(table);
                 self.ops.push(Op::Insert);
+                if let Expr::Variable { name, .. } = table {
+                    self.ops.push(Op::Store { name: name.clone() });
+                }
             }
             Statement::ReadTableStmt { table, target, index, key, .. } => {
                 if let Some(idx) = index {

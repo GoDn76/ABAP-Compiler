@@ -139,6 +139,9 @@ impl VM {
         sy.insert("TABIX".to_string(), serde_json::json!(0));
         sy.insert("DBCNT".to_string(), serde_json::json!(0));
         vars.insert("SY".to_string(), Value::Object(sy));
+        vars.insert("SY-SUBRC".to_string(), serde_json::json!(0));
+        vars.insert("SY-TABIX".to_string(), serde_json::json!(0));
+        vars.insert("SY-DBCNT".to_string(), serde_json::json!(0));
 
         if let Some(init_vars) = initial_vars {
             for (k, v) in init_vars {
@@ -331,7 +334,7 @@ impl VM {
                     stack.push(result.value);
                     pc += 1;
                 }
-                Op::Write { groups } => {
+                Op::Write { groups, .. } => {
                     let total: usize = groups.iter().sum();
                     let take_count = total.min(stack.len());
                     let vals: Vec<Value> = stack.drain(stack.len() - take_count..).collect();
@@ -579,9 +582,13 @@ impl VM {
                         set_var(&mut vars, shared, tgt, record);
                     }
 
+                    let subrc_val = if found.is_some() { 0 } else { 4 };
+                    let tabix_val = if found.is_some() { idx + 1 } else { 0 };
+                    vars.insert("SY-SUBRC".to_string(), serde_json::json!(subrc_val));
+                    vars.insert("SY-TABIX".to_string(), serde_json::json!(tabix_val));
                     if let Some(Value::Object(sy_map)) = vars.get_mut("SY") {
-                        sy_map.insert("SUBRC".to_string(), serde_json::json!(if idx >= 0 { 0 } else { 4 }));
-                        sy_map.insert("TABIX".to_string(), serde_json::json!(if idx >= 0 { idx + 1 } else { 0 }));
+                        sy_map.insert("SUBRC".to_string(), serde_json::json!(subrc_val));
+                        sy_map.insert("TABIX".to_string(), serde_json::json!(tabix_val));
                     }
                     stack.push(Value::Bool(idx >= 0));
                     pc += 1;

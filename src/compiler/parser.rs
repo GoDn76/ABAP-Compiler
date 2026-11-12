@@ -1560,6 +1560,12 @@ impl Parser {
         self.match_kind(TokenKind::Colon);
         let mut groups: Vec<Vec<Expr>> = vec![Vec::new()];
         let mut values = Vec::new();
+        let mut newline = false;
+
+        if self.current().lexeme == "/" {
+            newline = true;
+            self.consume();
+        }
 
         while !self.at(TokenKind::EOF) && !self.at(TokenKind::Dot) {
             if self.at(TokenKind::Comma) {
@@ -1593,6 +1599,7 @@ impl Parser {
             end: e.map(|tok| tok.end).unwrap_or(s.end),
             values,
             groups,
+            newline,
         }
     }
 
