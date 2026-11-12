@@ -519,7 +519,12 @@ impl SemanticAnalyzer {
         match expr {
             Expr::Variable { name, start, end } => {
                 let upper = name.to_ascii_uppercase();
-                if !self.classes.contains_key(&upper) && self.lookup(name).is_none() {
+                let base = upper.split('-').next().unwrap();
+                if !self.classes.contains_key(&upper)
+                    && self.lookup(name).is_none()
+                    && self.lookup(&upper).is_none()
+                    && self.lookup(base).is_none()
+                {
                     d.error("SEM010", format!("Undeclared variable '{}'.", name), *start, *end);
                 }
             }

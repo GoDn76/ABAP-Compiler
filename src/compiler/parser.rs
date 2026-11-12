@@ -313,6 +313,66 @@ impl Parser {
         }
 
         while !self.at(TokenKind::EOF) {
+            if self.match_keyword("BEGIN") && self.match_keyword("OF") {
+                let name = self.expect_identifier("Expected structure data object name.");
+                self.match_kind(TokenKind::Comma);
+                self.match_kind(TokenKind::Dot);
+                let mut fields = BTreeMap::new();
+                while !self.at(TokenKind::EOF) && !(self.is_keyword("END") && self.is_next_keyword("OF")) {
+                    let prev_i = self.i;
+                    let field = self.expect_identifier("Expected structure component.");
+                    if let Some(f) = field {
+                        self.expect_keyword("TYPE", "Expected TYPE for structure component.");
+                        let ty = self.parse_type().unwrap_or_else(|| TypeRef::scalar("any"));
+                        fields.insert(f.lexeme.to_ascii_uppercase(), ty);
+                        if self.at(TokenKind::Comma) || self.at(TokenKind::Dot) {
+                            self.consume();
+                        } else if !self.is_keyword("END") {
+                            self.recover_to_comma_or_dot();
+                        }
+                    } else {
+                        self.recover_to_comma_or_dot();
+                    }
+                    if self.i == prev_i {
+                        self.consume();
+                    }
+                }
+                self.expect_keyword("END", "Expected END OF in structure.");
+                self.expect_keyword("OF", "Expected OF in structure.");
+                if name.is_some() && (self.at(TokenKind::Identifier) || self.at(TokenKind::Keyword)) {
+                    self.consume();
+                }
+                let dot = if self.at(TokenKind::Dot) || self.at(TokenKind::Comma) {
+                    Some(self.consume())
+                } else {
+                    None
+                };
+                if let Some(n) = name {
+                    out.push(Statement::DataDecl {
+                        start: start.start,
+                        end: dot.map(|d| d.end).unwrap_or(start.end),
+                        name: n.lexeme.clone(),
+                        type_ref: TypeRef::Struct {
+                            name: n.lexeme,
+                            fields,
+                        },
+                        value: None,
+                        inline: Some(false),
+                        parameter: None,
+                        obligatory: None,
+                        checkbox: None,
+                        selection_options: None,
+                        no_intervals: None,
+                        no_extension: None,
+                        for_field: None,
+                        radiobutton_group: None,
+                        lower_case: None,
+                        no_display: None,
+                        value_help: None,
+                    });
+                }
+                break;
+            }
             if self.is_keyword("BEGIN") || self.is_keyword("END") {
                 break;
             }

@@ -469,4 +469,24 @@ WRITE |LH flights count: { lines( lt_lh ) }|.
         let vm = res.vm.expect("VM result should be present");
         assert_eq!(vm.output, vec!["LH flights count: 2"]);
     }
+
+    #[test]
+    fn test_hyphen_identifiers_string_bleed_and_write_unchain() {
+        let source = r#"
+REPORT zaudit_test.
+DATA: BEGIN OF ls_audit,
+        step_id TYPE string,
+      END OF ls_audit.
+ls_audit-step_id = 'S1'.
+WRITE: / 'Step ->', ls_audit-step_id.
+"#;
+        let mut options = CompileOptions::default();
+        options.run = true;
+        options.mode = Some(LanguageMode::Standard);
+
+        let res = compile_source(source, options);
+        assert!(res.ok, "Audit test failed: {:?}", res.diagnostics);
+        let vm = res.vm.expect("VM result should be present");
+        assert_eq!(vm.output, vec!["Step -> S1"]);
+    }
 }

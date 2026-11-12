@@ -89,17 +89,26 @@ impl Lexer {
             // Identifiers / regular keywords
             if ch.is_ascii_alphabetic() || ch == '_' {
                 let mut s = String::new();
-                while i < len && (self.source[i].is_ascii_alphanumeric() || self.source[i] == '_') {
-                    s.push(self.source[i]);
-                    i += 1;
-                    column += 1;
+                while i < len {
+                    let cur = self.source[i];
+                    if cur.is_ascii_alphanumeric() || cur == '_' {
+                        s.push(cur);
+                        i += 1;
+                        column += 1;
+                    } else if cur == '-' && i + 1 < len && (self.source[i + 1].is_ascii_alphanumeric() || self.source[i + 1] == '_') {
+                        s.push(cur);
+                        i += 1;
+                        column += 1;
+                    } else {
+                        break;
+                    }
                 }
                 line_start = false;
 
                 let end = Position { line, column, offset: i };
                 let upper = s.to_ascii_uppercase();
                 let is_kw = KEYWORDS.contains(upper.as_str());
-                tokens.push(Token::new(if is_kw { TokenKind::Keyword } else { TokenKind::Identifier }, upper, start, end));
+                tokens.push(Token::new(if is_kw { TokenKind::Keyword } else { TokenKind::Identifier }, s, start, end));
                 continue;
             }
 
@@ -140,23 +149,38 @@ impl Lexer {
 
                 while i < len {
                     if self.source[i] == '\'' {
-                        i += 1;
-                        column += 1;
-                        if i < len && self.source[i] == '\'' {
+                        if i + 1 < len && self.source[i + 1] == '\'' {
                             val.push('\'');
-                            i += 1;
-                            column += 1;
+                            i += 2;
+                            column += 2;
                             continue;
                         }
+                        i += 1;
+                        column += 1;
                         closed = true;
                         break;
                     }
+                    if self.source[i] == '\\' && i + 1 < len {
+                        if self.source[i + 1] == '\'' {
+                            val.push('\'');
+                            i += 2;
+                            column += 2;
+                            continue;
+                        } else if self.source[i + 1] == '\\' {
+                            val.push('\\');
+                            i += 2;
+                            column += 2;
+                            continue;
+                        }
+                    }
                     if self.source[i] == '\n' {
-                        break;
+                        line += 1;
+                        column = 1;
+                    } else {
+                        column += 1;
                     }
                     val.push(self.source[i]);
                     i += 1;
-                    column += 1;
                 }
 
                 line_start = false;
@@ -313,23 +337,12 @@ pub fn unchain_tokens(raw: Vec<Token>) -> Vec<Token> {
                     continue;
                 }
 
-                let is_write = chain_prefix
-                    .as_ref()
-                    .and_then(|p| p.first())
-                    .map(|t| t.upper == "WRITE")
-                    .unwrap_or(false);
-                let next_is_slash = if i + 1 < len { raw[i + 1].lexeme == "/" } else { false };
-
-                if !is_write || next_is_slash {
-                    let dot_pos = tok.end;
-                    out.push(Token::new(TokenKind::Dot, ".".to_string(), tok.start, dot_pos));
-                    if let Some(ref cp) = chain_prefix {
-                        for pt in cp {
-                            out.push(pt.clone());
-                        }
+                let dot_pos = tok.end;
+                out.push(Token::new(TokenKind::Dot, ".".to_string(), tok.start, dot_pos));
+                if let Some(ref cp) = chain_prefix {
+                    for pt in cp {
+                        out.push(pt.clone());
                     }
-                } else {
-                    out.push(tok.clone());
                 }
             }
             TokenKind::Dot if paren_depth == 0 => {

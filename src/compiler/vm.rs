@@ -32,6 +32,7 @@ pub struct SharedExecution {
     pub selected_rows: usize,
     pub depth: usize,
     pub eml_pending: Vec<EmlPendingOp>,
+    pub newline_required: bool,
 }
 
 pub struct IteratorState {
@@ -120,6 +121,7 @@ impl VM {
             selected_rows: 0,
             depth: 0,
             eml_pending: Vec::new(),
+            newline_required: false,
         };
 
         let shared = match shared_opt {
@@ -254,6 +256,9 @@ impl VM {
                     let args: Vec<Value> = stack.drain(stack.len() - take_count..).collect();
                     let special = iterator_call(name, &args, &mut iterators, &mut vars);
                     if special.handled {
+                        if name.eq_ignore_ascii_case("__iter_value") {
+                            shared.newline_required = true;
+                        }
                         if special.push {
                             stack.push(special.value.unwrap_or(Value::Null));
                         }
@@ -334,15 +339,24 @@ impl VM {
                     stack.push(result.value);
                     pc += 1;
                 }
-                Op::Write { groups, .. } => {
+                Op::Write { groups, newline } => {
                     let total: usize = groups.iter().sum();
                     let take_count = total.min(stack.len());
                     let vals: Vec<Value> = stack.drain(stack.len() - take_count..).collect();
                     let mut offset = 0;
-                    for count in groups {
+                    for (g_idx, count) in groups.iter().enumerate() {
                         let slice = &vals[offset..offset + count];
                         let line = slice.iter().map(format_value).collect::<Vec<_>>().join(" ");
-                        shared.output.push(line);
+                        let is_new = (*newline && g_idx == 0) || g_idx > 0 || shared.newline_required || shared.output.is_empty();
+                        shared.newline_required = false;
+                        if is_new {
+                            shared.output.push(line);
+                        } else if let Some(last) = shared.output.last_mut() {
+                            if !last.is_empty() && !line.is_empty() {
+                                last.push(' ');
+                            }
+                            last.push_str(&line);
+                        }
                         offset += count;
                     }
                     pc += 1;
@@ -1376,6 +1390,17 @@ fn get_var(vars: &HashMap<String, Value>, shared: &SharedExecution, name: &str) 
     if let Some(v) = vars.get(&key) {
         return v.clone();
     }
+    if key.contains('-') {
+        let mut parts = key.splitn(2, '-');
+        if let (Some(base), Some(field)) = (parts.next(), parts.next()) {
+            if let Some(v) = vars.get(base) {
+                let fv = field_get(v, field);
+                if !fv.is_null() {
+                    return fv;
+                }
+            }
+        }
+    }
     if let Some(Value::Object(me)) = vars.get("ME") {
         if !me.get("__STATIC_CONTEXT").and_then(|v| v.as_bool()).unwrap_or(false) {
             if let Some(val) = me.get(&key) {
@@ -1394,6 +1419,14 @@ fn get_var(vars: &HashMap<String, Value>, shared: &SharedExecution, name: &str) 
 
 fn set_var(vars: &mut HashMap<String, Value>, shared: &mut SharedExecution, name: &str, v: Value) {
     let key = name.to_ascii_uppercase();
+    if key.contains('-') {
+        let mut parts = key.splitn(2, '-');
+        if let (Some(base), Some(field)) = (parts.next(), parts.next()) {
+            if let Some(base_val) = vars.get_mut(base) {
+                let _ = field_set(base_val, field, v.clone());
+            }
+        }
+    }
     if vars.contains_key(&key) {
         vars.insert(key, v);
         return;
