@@ -9,6 +9,13 @@
 
 import process from 'node:process';
 
+process.env.NO_PROXY = '*';
+delete process.env.http_proxy;
+delete process.env.https_proxy;
+delete process.env.HTTP_PROXY;
+delete process.env.HTTPS_PROXY;
+delete process.env.ALL_PROXY;
+
 const args = process.argv.slice(2);
 let targetUrl = 'http://127.0.0.1:7345';
 
