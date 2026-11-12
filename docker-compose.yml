@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  abapc-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: abapc_studio_server
+    ports:
+      - "7345:7345"
+    environment:
+      - ABAPC_PORT=7345
+      - ABAPC_HOST=0.0.0.0
+      - ABAPC_NO_BROWSER=1
+      - RUST_LOG=info
+      - DATABASE_URL=postgres://abap:abap_secret@postgres:5432/abapc_studio
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./executed codes:/app/executed codes
+      - ./runtime:/app/runtime
+
+  redis:
+    image: redis:7-alpine
+    container_name: abapc_studio_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: abapc_studio_postgres
+    environment:
+      POSTGRES_USER: abap
+      POSTGRES_PASSWORD: abap_secret
+      POSTGRES_DB: abapc_studio
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U abap -d abapc_studio"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
