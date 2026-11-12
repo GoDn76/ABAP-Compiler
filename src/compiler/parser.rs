@@ -1,5 +1,5 @@
 use super::ast::*;
-use super::diagnostics::DiagnosticBag;
+use super::diagnostics::{DiagnosticBag, Position};
 use super::tokens::{Token, TokenKind};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
@@ -43,7 +43,7 @@ impl Parser {
             tokens,
             i: 0,
             report_name: None,
-            types: Vec::new>,
+            types: Vec::new(),
             classes: Vec::new(),
             diagnostics: DiagnosticBag::new(),
         }
@@ -764,7 +764,7 @@ impl Parser {
 
     fn parse_event_block(&mut self) -> Statement {
         let s = self.current().clone();
-        let mut event = "start-of-selection".to_string();
+        let event;
         let mut target = None;
 
         if self.match_keyword("INITIALIZATION") {
@@ -2247,14 +2247,14 @@ impl Parser {
                 continue;
             }
             if self.match_keyword("RETURNING") {
-                let mut by_val_name = None;
-                if self.match_keyword("VALUE") {
+                let by_val_name = if self.match_keyword("VALUE") {
                     self.expect(TokenKind::LParen, "Expected ( after VALUE in RETURNING.");
-                    by_val_name = self.expect_identifier("Expected returning parameter name.").map(|t| t.lexeme);
+                    let name = self.expect_identifier("Expected returning parameter name.").map(|t| t.lexeme);
                     self.expect(TokenKind::RParen, "Expected ) after returning parameter name.");
+                    name
                 } else {
-                    by_val_name = self.expect_identifier("Expected returning parameter name.").map(|t| t.lexeme);
-                }
+                    self.expect_identifier("Expected returning parameter name.").map(|t| t.lexeme)
+                };
                 self.expect_keyword("TYPE", "Expected TYPE for returning parameter.");
                 let ty = self.parse_type().unwrap_or_else(|| TypeRef::scalar("any"));
                 if let Some(bvn) = by_val_name {
@@ -2263,16 +2263,16 @@ impl Parser {
                 continue;
             }
 
-            let mut param_name = None;
             let mut pass_by_value = false;
-            if self.match_keyword("VALUE") {
+            let param_name = if self.match_keyword("VALUE") {
                 pass_by_value = true;
                 self.expect(TokenKind::LParen, "Expected ( after VALUE.");
-                param_name = self.expect_identifier("Expected parameter name.").map(|t| t.lexeme);
+                let name = self.expect_identifier("Expected parameter name.").map(|t| t.lexeme);
                 self.expect(TokenKind::RParen, "Expected ) after parameter name.");
+                name
             } else {
-                param_name = self.expect_identifier("Expected formal parameter name.").map(|t| t.lexeme);
-            }
+                self.expect_identifier("Expected formal parameter name.").map(|t| t.lexeme)
+            };
 
             let pname = match param_name {
                 Some(p) => p,

@@ -1,3 +1,4 @@
+use super::ast::Expr;
 use super::ir::{initial_value_for_type, ClassIR, MethodIR, Op, OutputBinding, ProgramIR, Value, VarIR};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -697,7 +698,7 @@ impl VM {
                     }
                     pc += 1;
                 }
-                Op::EmlRead { entity, filter_rows, result_target, failed_target, reported_target } => {
+                Op::EmlRead { entity: _, filter_rows, result_target, failed_target, reported_target } => {
                     let value_count: usize = filter_rows.iter().map(|r| r.names.len()).sum();
                     let take_count = value_count.min(stack.len());
                     let values: Vec<Value> = stack.drain(stack.len() - take_count..).collect();
@@ -1169,10 +1170,10 @@ fn resolve_runtime_method(
     method_name: &str,
 ) -> Option<ResolvedMethodInfo> {
     for class_ir in class_lineage_runtime(shared, class_name) {
-        if let Some(m) = class_ir.methods.get(&method_name.to_ascii_uppercase()) {
+        if let Some(m) = class_ir.methods.get(&method_name.to_ascii_uppercase()).cloned() {
             return Some(ResolvedMethodInfo {
                 class_ir,
-                method: m.clone(),
+                method: m,
             });
         }
     }

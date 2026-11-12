@@ -1,6 +1,6 @@
 use super::ast::*;
 use super::class_model::{build_class_models, class_lineage, inherited_attributes, resolve_method, ClassModel};
-use super::diagnostics::DiagnosticBag;
+use super::diagnostics::{DiagnosticBag, Position};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

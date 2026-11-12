@@ -3,7 +3,6 @@ use abapc_studio::config::AppConfig;
 use abapc_studio::db::{PostgresClient, RedisSessionStore};
 use abapc_studio::platform::LocalPlatform;
 use abapc_studio::server::create_router;
-use std::net::SocketAddr;
 use std::process::Command;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -57,12 +56,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
                 continue;
             }
-            Err(e) => return Err(Box::new(e)),
+            Err(e) => return Err(e.into()),
         }
     }
 
-    let listener = bound_listener
-        .ok_or_else(|| "Could not find a free local port in range 7345-7365.")?;
+    let listener = bound_listener.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AddrNotAvailable,
+            "Could not find a free local port in range 7345-7365.",
+        )
+    })?;
 
     let base_url = format!("http://{}:{}", config.host, active_port);
     let gui_url = format!("{}/sapgui", base_url);

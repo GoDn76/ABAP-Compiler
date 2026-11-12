@@ -1,7 +1,6 @@
 use crate::compiler::diagnostics::Diagnostic;
 use crate::compiler::ir::ProgramIR;
 use crate::compiler::policy::ReleasedApiManifest;
-use crate::compiler::vm::VMResult;
 use crate::compiler::CompileStats;
 use crate::platform::types::{CdsView, LocalField, LocalObject, RapOperation};
 use serde::{Deserialize, Serialize};

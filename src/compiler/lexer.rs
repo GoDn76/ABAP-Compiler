@@ -69,7 +69,7 @@ impl Lexer {
 
             // Check compound keywords with hyphens
             let remaining_slice: String = self.source[i..].iter().take(40).collect();
-            if let Some(mat) = COMPOUND_REGEX.find(&remaining_slice) {
+            if COMPOUND_REGEX.is_match(&remaining_slice) {
                 // The regex captures compound keyword group 1
                 let cap = COMPOUND_REGEX.captures(&remaining_slice).unwrap();
                 let word_len = cap.get(1).unwrap().as_str().chars().count();

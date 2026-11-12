@@ -1,4 +1,4 @@
-use super::ast::{ClassAttributeDecl, ClassDecl, MethodDecl, Program, TypeDecl};
+use super::ast::{ClassAttributeDecl, MethodDecl, Program, TypeDecl};
 use super::diagnostics::Position;
 use std::collections::{HashMap, HashSet};
 
@@ -162,8 +162,8 @@ pub fn resolve_method(
 ) -> Option<(ClassModel, MethodDecl)> {
     let m_upper = method_name.to_ascii_uppercase();
     for model in class_lineage(models, class_name) {
-        if let Some(method) = model.methods.get(&m_upper) {
-            return Some((model, method.clone()));
+        if let Some(method) = model.methods.get(&m_upper).cloned() {
+            return Some((model, method));
         }
     }
     None

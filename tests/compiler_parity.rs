@@ -92,7 +92,7 @@ WRITE: p_total.
     options.run = true;
     options.mode = Some(LanguageMode::Standard);
     let mut params = HashMap::new();
-    params.insert("P_TOTAL".to_string(), "42".to_string());
+    params.insert("P_TOTAL".to_string(), serde_json::json!("42"));
     options.parameter_values = params;
 
     let res = compile_source(source, options);

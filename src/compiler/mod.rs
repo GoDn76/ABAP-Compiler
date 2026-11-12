@@ -14,16 +14,13 @@ use diagnostics::{Diagnostic, DiagnosticBag};
 use ir::{ProgramIR, RequestedEvent};
 use lexer::Lexer;
 use parser::Parser;
-use policy::{default_policy_manifest, validate_policy, CompilerPolicy, LanguageMode, ReleasedApiManifest};
+use policy::{validate_policy, CompilerPolicy, LanguageMode, ReleasedApiManifest};
 use semantic::SemanticAnalyzer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
 use vm::{VMResult, VM};
 
-fn default_policy_manifest() -> ReleasedApiManifest {
-    ReleasedApiManifest::default()
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompileStats {
@@ -192,6 +189,7 @@ pub fn compile_source(source: &str, options: CompileOptions) -> CompileResult {
 
     let errs = diagnostics.items.iter().filter(|d| d.severity == diagnostics::Severity::Error).count();
     let warns = diagnostics.items.iter().filter(|d| d.severity == diagnostics::Severity::Warning).count();
+    let diag_count = diagnostics.items.len();
     let d_text = diagnostics.items.iter().map(diagnostics::format_diagnostic).collect();
 
     CompileResult {
@@ -202,7 +200,7 @@ pub fn compile_source(source: &str, options: CompileOptions) -> CompileResult {
         vm: None,
         stats: CompileStats {
             tokens: token_count,
-            diagnostics: diagnostics.items.len(),
+            diagnostics: diag_count,
             errors: errs,
             warnings: warns,
             elapsed_ms: started.elapsed().as_millis() as u64,
