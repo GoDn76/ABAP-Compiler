@@ -496,9 +496,9 @@ impl SemanticAnalyzer {
                     }
                 }
             }
-            Statement::SelectStmt { where_clause, .. } => {
-                if let Some(w) = where_clause {
-                    self.check_expr(w, d);
+            Statement::SelectStmt { target, .. } => {
+                if let Some(t) = target {
+                    self.declare(t, TypeRef::any(), false, None, d);
                 }
             }
             Statement::TryStmt { body, catches, .. } => {

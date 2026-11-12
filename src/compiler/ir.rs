@@ -730,12 +730,18 @@ impl Lowerer {
                         } else {
                             self.expr(base);
                             self.ops.push(Op::StoreField { field: field.clone() });
+                            if let Expr::Variable { name: base_name, .. } = &**base {
+                                self.ops.push(Op::Store { name: base_name.clone() });
+                            }
                         }
                     }
                     Expr::Index { base, index, .. } => {
                         self.expr(base);
                         self.expr(index);
                         self.ops.push(Op::IndexSet);
+                        if let Expr::Variable { name: base_name, .. } = &**base {
+                            self.ops.push(Op::Store { name: base_name.clone() });
+                        }
                     }
                     _ => {}
                 }
@@ -1311,6 +1317,26 @@ impl Lowerer {
                     single: *single,
                     where_clause: where_clause.clone(),
                 });
+                if let Some(t) = target {
+                    self.vars.push(VarIR {
+                        name: t.clone(),
+                        type_ref: TypeRef::any(),
+                        constant: false,
+                        parameter: None,
+                        obligatory: None,
+                        checkbox: None,
+                        selection_options: None,
+                        no_intervals: None,
+                        no_extension: None,
+                        for_field: None,
+                        radiobutton_group: None,
+                        lower_case: None,
+                        no_display: None,
+                        value_help: None,
+                        has_default: None,
+                        initial_value: None,
+                    });
+                }
             }
             Statement::TryStmt { body, .. } => {
                 for x in body {

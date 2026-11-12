@@ -252,7 +252,7 @@ impl VM {
                 Op::Call { name, argc } => {
                     let take_count = (*argc).min(stack.len());
                     let args: Vec<Value> = stack.drain(stack.len() - take_count..).collect();
-                    let special = iterator_call(name, &args, &mut iterators);
+                    let special = iterator_call(name, &args, &mut iterators, &mut vars);
                     if special.handled {
                         if special.push {
                             stack.push(special.value.unwrap_or(Value::Null));
@@ -671,9 +671,13 @@ impl VM {
                         .collect();
 
                     shared.selected_rows += filtered_rows.len();
+                    let subrc_val = if !filtered_rows.is_empty() { 0 } else { 4 };
+                    let dbcnt_val = filtered_rows.len();
+                    vars.insert("SY-SUBRC".to_string(), serde_json::json!(subrc_val));
+                    vars.insert("SY-DBCNT".to_string(), serde_json::json!(dbcnt_val));
                     if let Some(Value::Object(sy_map)) = vars.get_mut("SY") {
-                        sy_map.insert("SUBRC".to_string(), serde_json::json!(if !filtered_rows.is_empty() { 0 } else { 4 }));
-                        sy_map.insert("DBCNT".to_string(), serde_json::json!(filtered_rows.len()));
+                        sy_map.insert("SUBRC".to_string(), serde_json::json!(subrc_val));
+                        sy_map.insert("DBCNT".to_string(), serde_json::json!(dbcnt_val));
                     }
 
                     let mut projected_rows = Vec::new();
@@ -1302,7 +1306,12 @@ struct IteratorCallResult {
     value: Option<Value>,
 }
 
-fn iterator_call(name: &str, args: &[Value], iters: &mut Vec<IteratorState>) -> IteratorCallResult {
+fn iterator_call(
+    name: &str,
+    args: &[Value],
+    iters: &mut Vec<IteratorState>,
+    vars: &mut HashMap<String, Value>,
+) -> IteratorCallResult {
     match name.to_ascii_uppercase().as_str() {
         "__ITER_START" => {
             let table = match args.first() {
@@ -1318,6 +1327,9 @@ fn iterator_call(name: &str, args: &[Value], iters: &mut Vec<IteratorState>) -> 
         }
         "__ITER_HAS_NEXT" => {
             let has = iters.last().map(|it| it.index < it.values.len()).unwrap_or(false);
+            if !has && !iters.is_empty() {
+                iters.pop();
+            }
             IteratorCallResult {
                 handled: true,
                 push: true,
@@ -1325,7 +1337,16 @@ fn iterator_call(name: &str, args: &[Value], iters: &mut Vec<IteratorState>) -> 
             }
         }
         "__ITER_VALUE" => {
-            let val = iters.last().and_then(|it| it.values.get(it.index)).cloned().unwrap_or(Value::Null);
+            let (val, tabix) = if let Some(it) = iters.last() {
+                let v = it.values.get(it.index).cloned().unwrap_or(Value::Null);
+                (v, it.index + 1)
+            } else {
+                (Value::Null, 0)
+            };
+            vars.insert("SY-TABIX".to_string(), serde_json::json!(tabix));
+            if let Some(Value::Object(sy_map)) = vars.get_mut("SY") {
+                sy_map.insert("TABIX".to_string(), serde_json::json!(tabix));
+            }
             IteratorCallResult {
                 handled: true,
                 push: true,
@@ -1439,6 +1460,9 @@ fn field_get(base: &Value, field: &str) -> Value {
 }
 
 fn field_set(base: &mut Value, field: &str, v: Value) -> Result<(), String> {
+    if !base.is_object() {
+        *base = Value::Object(serde_json::Map::new());
+    }
     match base {
         Value::Object(map) => {
             map.insert(field.to_ascii_uppercase(), v);

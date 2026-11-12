@@ -1,5 +1,6 @@
 use super::ast::*;
 use super::diagnostics::{DiagnosticBag, Position};
+use super::lexer::Lexer;
 use super::tokens::{Token, TokenKind};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
@@ -1025,17 +1026,20 @@ impl Parser {
         self.match_kind(TokenKind::Colon);
 
         while !self.at(TokenKind::EOF) {
+            let initial_i = self.i;
             if self.match_keyword("BEGIN") && self.match_keyword("OF") {
                 let type_name = self.expect_identifier("Expected structure type name.");
                 self.match_kind(TokenKind::Comma);
+                self.match_kind(TokenKind::Dot);
                 let mut fields = BTreeMap::new();
                 while !self.at(TokenKind::EOF) && !(self.is_keyword("END") && self.is_next_keyword("OF")) {
+                    let prev_i = self.i;
                     let field = self.expect_identifier("Expected structure component.");
                     if let Some(f) = field {
                         self.expect_keyword("TYPE", "Expected TYPE for structure component.");
                         let ty = self.parse_type().unwrap_or_else(|| TypeRef::scalar("any"));
                         fields.insert(f.lexeme.to_ascii_uppercase(), ty);
-                        if self.at(TokenKind::Comma) {
+                        if self.at(TokenKind::Comma) || self.at(TokenKind::Dot) {
                             self.consume();
                         } else if !self.is_keyword("END") {
                             self.recover_to_comma_or_dot();
@@ -1043,13 +1047,20 @@ impl Parser {
                     } else {
                         self.recover_to_comma_or_dot();
                     }
+                    if self.i == prev_i {
+                        self.consume();
+                    }
                 }
                 self.expect_keyword("END", "Expected END OF in structure type.");
                 self.expect_keyword("OF", "Expected OF in structure type.");
-                if type_name.is_some() && self.at(TokenKind::Identifier) {
+                if type_name.is_some() && (self.at(TokenKind::Identifier) || self.at(TokenKind::Keyword)) {
                     self.consume();
                 }
-                let dot = self.expect_dot("Expected \".\" after END OF type.");
+                let dot = if self.at(TokenKind::Dot) || self.at(TokenKind::Comma) {
+                    Some(self.consume())
+                } else {
+                    None
+                };
                 if let Some(tn) = type_name {
                     let node = TypeDecl {
                         name: tn.lexeme.clone(),
@@ -1069,7 +1080,10 @@ impl Parser {
             let name = self.expect_identifier("Expected type name.");
             let name_tok = match name {
                 Some(n) => n,
-                None => break,
+                None => {
+                    self.recover_to_comma_or_dot();
+                    break;
+                }
             };
             self.expect_keyword("TYPE", "Expected TYPE in TYPES declaration.");
             let type_ref = self.parse_type().unwrap_or_else(|| TypeRef::scalar("any"));
@@ -1086,7 +1100,12 @@ impl Parser {
                 self.consume();
                 break;
             }
-            self.expect(TokenKind::Comma, "Expected comma or period in TYPES declaration.");
+            if !self.match_kind(TokenKind::Comma) {
+                self.recover_to_comma_or_dot();
+            }
+            if self.i == initial_i {
+                self.consume();
+            }
         }
         Some(out)
     }
@@ -1833,12 +1852,36 @@ impl Parser {
         let s = self.consume();
         let single = self.match_keyword("SINGLE");
         let mut fields = Vec::new();
+        let mut source = String::new();
 
-        if !self.match_keyword("FROM") {
-            if self.match_kind(TokenKind::Operator) && self.previous().lexeme == "*" {
-                fields = vec!["*".to_string()];
+        if self.match_keyword("FROM") {
+            if self.at(TokenKind::Identifier) || self.at(TokenKind::Keyword) {
+                source = self.consume().lexeme;
+            }
+            if self.match_keyword("FIELDS") {
+                while !self.at(TokenKind::EOF) && !self.is_keyword("INTO") && !self.is_keyword("WHERE") && !self.at(TokenKind::Dot) {
+                    if self.at(TokenKind::Comma) {
+                        self.consume();
+                        continue;
+                    }
+                    if self.at(TokenKind::Operator) && self.current().lexeme == "*" {
+                        self.consume();
+                        fields.push("*".to_string());
+                        continue;
+                    }
+                    if self.at(TokenKind::Identifier) || self.at(TokenKind::Keyword) {
+                        fields.push(self.consume().lexeme);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        } else {
+            if self.at(TokenKind::Operator) && self.current().lexeme == "*" {
+                self.consume();
+                fields.push("*".to_string());
             } else {
-                while !self.at(TokenKind::EOF) && !self.is_keyword("FROM") {
+                while !self.at(TokenKind::EOF) && !self.is_keyword("FROM") && !self.at(TokenKind::Dot) {
                     if self.at(TokenKind::Comma) {
                         self.consume();
                         continue;
@@ -1849,58 +1892,66 @@ impl Parser {
                         break;
                     }
                 }
-                self.expect_keyword("FROM", "Expected FROM in SELECT.");
             }
-        }
-
-        let mut source = String::new();
-        if self.at(TokenKind::Identifier) || self.at(TokenKind::Keyword) {
-            source = self.consume().lexeme;
-        } else {
-            self.diagnostics.error(
-                "PAR030",
-                "Expected data source after FROM.",
-                self.current().start,
-                self.current().end,
-            );
-        }
-
-        if fields.is_empty() && self.match_keyword("FIELDS") {
-            while !self.at(TokenKind::EOF) && !self.is_keyword("INTO") && !self.is_keyword("WHERE") {
-                if self.at(TokenKind::Comma) {
-                    self.consume();
-                    continue;
-                }
-                if self.at(TokenKind::Operator) && self.current().lexeme == "*" {
-                    self.consume();
-                    fields = vec!["*".to_string()];
-                    continue;
-                }
-                if self.at(TokenKind::Identifier) || self.at(TokenKind::Keyword) {
-                    fields.push(self.consume().lexeme);
-                } else {
-                    break;
-                }
+            self.expect_keyword("FROM", "Expected FROM in SELECT.");
+            if self.at(TokenKind::Identifier) || self.at(TokenKind::Keyword) {
+                source = self.consume().lexeme;
+            } else {
+                self.diagnostics.error(
+                    "PAR030",
+                    "Expected data source after FROM.",
+                    self.current().start,
+                    self.current().end,
+                );
             }
         }
 
         let mut where_clause = None;
-        if self.match_keyword("WHERE") {
-            where_clause = Some(self.parse_expression(0));
-        }
-
         let mut target = None;
-        if self.match_keyword("INTO") {
-            self.match_keyword("TABLE");
-            self.match_kind(TokenKind::At);
-            if self.match_keyword("DATA") {
-                self.match_kind(TokenKind::LParen);
-                target = self.expect_identifier("Expected inline target.").map(|t| t.lexeme);
-                self.match_kind(TokenKind::RParen);
+
+        while !self.at(TokenKind::EOF) && !self.at(TokenKind::Dot) {
+            let prev_i = self.i;
+            if self.match_keyword("INTO") {
+                if self.match_keyword("CORRESPONDING") {
+                    self.match_keyword("FIELDS");
+                    self.match_keyword("OF");
+                }
+                self.match_keyword("TABLE");
+                self.match_kind(TokenKind::At);
+
+                if self.match_keyword("DATA") {
+                    self.expect(TokenKind::LParen, "Expected ( after DATA in SELECT INTO.");
+                    target = self.expect_identifier("Expected inline target variable.").map(|t| t.lexeme);
+                    self.expect(TokenKind::RParen, "Expected ) after inline variable name.");
+                } else if self.at(TokenKind::LParen) {
+                    self.consume();
+                    target = self.expect_identifier("Expected inline target variable.").map(|t| t.lexeme);
+                    self.expect(TokenKind::RParen, "Expected ) after inline variable name.");
+                } else {
+                    target = self.expect_identifier("Expected target variable after INTO.").map(|t| t.lexeme);
+                }
+            } else if self.match_keyword("WHERE") {
+                where_clause = Some(self.parse_expression(0));
+            } else if self.match_keyword("ORDER") {
+                self.match_keyword("BY");
+                while !self.at(TokenKind::EOF) && !self.at(TokenKind::Dot) && !self.is_keyword("INTO") && !self.is_keyword("WHERE") && !self.is_keyword("UP") {
+                    self.consume();
+                }
+            } else if self.match_keyword("UP") {
+                self.match_keyword("TO");
+                if self.at(TokenKind::Integer) {
+                    self.consume();
+                }
+                self.match_keyword("ROWS");
             } else {
-                target = self.expect_identifier("Expected target after INTO.").map(|t| t.lexeme);
+                self.consume();
+            }
+
+            if self.i == prev_i {
+                self.consume();
             }
         }
+
         let e = self.expect_dot("Expected \".\" after SELECT.");
         Statement::SelectStmt {
             start: s.start,
@@ -2720,6 +2771,10 @@ impl Parser {
                 type_ref: TypeRef::scalar("string"),
             };
         }
+        if t.kind == TokenKind::StringTemplate {
+            let tok = self.consume();
+            return self.parse_string_template(&tok);
+        }
         if t.upper == "ABAP_TRUE" || t.upper == "TRUE" {
             self.consume();
             return Expr::Literal {
@@ -2860,6 +2915,104 @@ impl Parser {
         }
     }
 
+    fn parse_string_template(&mut self, token: &Token) -> Expr {
+        let content = &token.lexeme;
+        let mut parts: Vec<Expr> = Vec::new();
+        let mut chars = content.chars().peekable();
+        let mut buffer = String::new();
+
+        while let Some(ch) = chars.next() {
+            if ch == '{' {
+                if !buffer.is_empty() {
+                    parts.push(Expr::Literal {
+                        start: token.start,
+                        end: token.end,
+                        value: serde_json::Value::String(buffer.clone()),
+                        type_ref: TypeRef::scalar("string"),
+                    });
+                    buffer.clear();
+                }
+
+                let mut expr_str = String::new();
+                let mut depth = 1;
+                while let Some(ech) = chars.next() {
+                    if ech == '{' {
+                        depth += 1;
+                        expr_str.push(ech);
+                    } else if ech == '}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        expr_str.push(ech);
+                    } else {
+                        expr_str.push(ech);
+                    }
+                }
+
+                let trimmed = expr_str.trim();
+                if !trimmed.is_empty() {
+                    let (tokens, diags) = Lexer::new(trimmed).tokenize();
+                    self.diagnostics.extend(diags);
+                    let expr = Parser::new(tokens).parse_expression(0);
+                    parts.push(expr);
+                }
+            } else {
+                buffer.push(ch);
+            }
+        }
+
+        if !buffer.is_empty() {
+            parts.push(Expr::Literal {
+                start: token.start,
+                end: token.end,
+                value: serde_json::Value::String(buffer),
+                type_ref: TypeRef::scalar("string"),
+            });
+        }
+
+        if parts.is_empty() {
+            return Expr::Literal {
+                start: token.start,
+                end: token.end,
+                value: serde_json::Value::String(String::new()),
+                type_ref: TypeRef::scalar("string"),
+            };
+        }
+
+        if parts.len() == 1 {
+            let first = parts.pop().unwrap();
+            return match first {
+                Expr::Literal { .. } => first,
+                _ => Expr::Binary {
+                    start: token.start,
+                    end: token.end,
+                    op: "&&".to_string(),
+                    left: Box::new(Expr::Literal {
+                        start: token.start,
+                        end: token.end,
+                        value: serde_json::Value::String(String::new()),
+                        type_ref: TypeRef::scalar("string"),
+                    }),
+                    right: Box::new(first),
+                },
+            };
+        }
+
+        let mut iter = parts.into_iter();
+        let mut acc = iter.next().unwrap();
+        for next_part in iter {
+            acc = Expr::Binary {
+                start: token.start,
+                end: token.end,
+                op: "&&".to_string(),
+                left: Box::new(acc),
+                right: Box::new(next_part),
+            };
+        }
+        acc
+    }
+
     fn parse_block(&mut self, end_words: &HashSet<String>) -> Vec<Statement> {
         let mut out = Vec::new();
         while !self.at(TokenKind::EOF) && !self.is_word_in(end_words) && !self.is_event_header_ahead() {
@@ -2887,10 +3040,13 @@ impl Parser {
     }
 
     fn recover_to_comma_or_dot(&mut self) {
+        let initial_i = self.i;
         while !self.at(TokenKind::EOF) && !self.at(TokenKind::Comma) && !self.at(TokenKind::Dot) {
             self.consume();
         }
-        if self.at(TokenKind::Comma) {
+        if self.at(TokenKind::Comma) || self.at(TokenKind::Dot) {
+            self.consume();
+        } else if self.i == initial_i && !self.at(TokenKind::EOF) {
             self.consume();
         }
     }

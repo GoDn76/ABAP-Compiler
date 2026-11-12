@@ -174,13 +174,19 @@ impl Lexer {
                 column += 1;
                 let mut val = String::new();
                 let mut closed = false;
+                let mut brace_depth = 0;
 
                 while i < len {
-                    if self.source[i] == '|' {
+                    if self.source[i] == '|' && brace_depth == 0 {
                         i += 1;
                         column += 1;
                         closed = true;
                         break;
+                    }
+                    if self.source[i] == '{' {
+                        brace_depth += 1;
+                    } else if self.source[i] == '}' && brace_depth > 0 {
+                        brace_depth -= 1;
                     }
                     if self.source[i] == '\\' && i + 1 < len {
                         val.push(self.source[i + 1]);
@@ -271,10 +277,16 @@ pub fn unchain_tokens(raw: Vec<Token>) -> Vec<Token> {
     let mut prefix = Vec::new();
     let mut chain_prefix: Option<Vec<Token>> = None;
     let mut paren_depth = 0;
+    let mut in_begin_of = false;
     let len = raw.len();
 
     for i in 0..len {
         let tok = &raw[i];
+
+        if tok.upper == "BEGIN" && i + 1 < len && raw[i + 1].upper == "OF" {
+            in_begin_of = true;
+        }
+
         match tok.kind {
             TokenKind::LParen | TokenKind::LBracket => {
                 paren_depth += 1;
@@ -296,6 +308,11 @@ pub fn unchain_tokens(raw: Vec<Token>) -> Vec<Token> {
                 chain_prefix = Some(prefix.clone());
             }
             TokenKind::Comma if paren_depth == 0 && chain_prefix.is_some() => {
+                if in_begin_of {
+                    out.push(tok.clone());
+                    continue;
+                }
+
                 let is_write = chain_prefix
                     .as_ref()
                     .and_then(|p| p.first())
@@ -319,11 +336,15 @@ pub fn unchain_tokens(raw: Vec<Token>) -> Vec<Token> {
                 out.push(tok.clone());
                 prefix.clear();
                 chain_prefix = None;
+                in_begin_of = false;
             }
             TokenKind::EOF => {
                 out.push(tok.clone());
             }
             _ => {
+                if tok.upper == "END" && i + 1 < len && raw[i + 1].upper == "OF" {
+                    in_begin_of = false;
+                }
                 if chain_prefix.is_none() {
                     prefix.push(tok.clone());
                 }

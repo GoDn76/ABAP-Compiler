@@ -352,6 +352,20 @@ START-OF-SELECTION.
     }
 
     #[test]
+    fn test_select_inline_data() {
+        let source = r#"
+REPORT zsel_test.
+SELECT carrid, connid, fldate, price FROM sflight INTO TABLE @DATA(lt_live_flights).
+"#;
+        let mut options = CompileOptions::default();
+        options.run = true;
+        options.mode = Some(LanguageMode::Standard);
+
+        let res = compile_source(source, options);
+        assert!(res.ok, "Select failed: {:?}", res.diagnostics);
+    }
+
+    #[test]
     fn test_classic_strings_translate_and_split() {
         let source = r#"
 REPORT zstr_test.
@@ -372,5 +386,87 @@ ENDLOOP.
         assert!(res.ok, "Strings test failed: {:?}", res.diagnostics);
         let vm = res.vm.expect("VM result should be present");
         assert_eq!(vm.output, vec!["HELLO", "CLOUD"]);
+    }
+
+    #[test]
+    fn test_types_begin_of_struct_and_loop_sy_tabix() {
+        let source = r#"
+REPORT zstruct_loop_test.
+TYPES: BEGIN OF ty_flight,
+         carrid TYPE c,
+         connid TYPE n,
+       END OF ty_flight.
+DATA lt_flights TYPE TABLE OF ty_flight.
+DATA ls_row TYPE ty_flight.
+ls_row-carrid = 'LH'.
+ls_row-connid = 400.
+APPEND ls_row TO lt_flights.
+ls_row-carrid = 'SQ'.
+ls_row-connid = 88.
+APPEND ls_row TO lt_flights.
+
+LOOP AT lt_flights INTO DATA(ls_cur).
+  WRITE: / 'Index:', sy-tabix, ls_cur-carrid.
+ENDLOOP.
+"#;
+        let mut options = CompileOptions::default();
+        options.run = true;
+        options.mode = Some(LanguageMode::Standard);
+
+        let res = compile_source(source, options);
+        assert!(res.ok, "Types struct and loop test failed: {:?}", res.diagnostics);
+        let vm = res.vm.expect("VM result should be present");
+        assert_eq!(vm.output, vec!["Index: 1 LH", "Index: 2 SQ"]);
+    }
+
+    #[test]
+    fn test_string_template_interpolation_with_lines_and_select() {
+        let source = r#"
+REPORT zflight_report.
+TYPES: BEGIN OF ty_flight,
+         carrid TYPE c,
+         connid TYPE n,
+         fldate TYPE d,
+         price  TYPE p,
+       END OF ty_flight.
+
+DATA lt_live_flights TYPE TABLE OF ty_flight.
+
+SELECT carrid, connid, fldate, price FROM sflight INTO TABLE @DATA(lt_live_flights).
+
+WRITE |Successfully fetched { lines( lt_live_flights ) } rows|.
+
+LOOP AT lt_live_flights INTO DATA(ls_flight).
+  WRITE: / 'Flight:', ls_flight-carrid, ls_flight-connid, 'Tabix:', sy-tabix.
+ENDLOOP.
+"#;
+        let mut options = CompileOptions::default();
+        options.run = true;
+        options.mode = Some(LanguageMode::Standard);
+
+        let res = compile_source(source, options);
+        assert!(res.ok, "Flight report test failed: {:?}", res.diagnostics);
+        let vm = res.vm.expect("VM result should be present");
+        assert_eq!(vm.output[0], "Successfully fetched 3 rows");
+        assert_eq!(vm.output[1], "Flight: LH 400 Tabix: 1");
+        assert_eq!(vm.output[2], "Flight: LH 401 Tabix: 2");
+        assert_eq!(vm.output[3], "Flight: SQ 88 Tabix: 3");
+    }
+
+    #[test]
+    fn test_open_sql_select_where_clause_with_inline() {
+        let source = r#"
+REPORT zsql_where.
+SELECT * FROM sflight INTO TABLE @DATA(lt_lh) WHERE carrid = 'LH'.
+WRITE |LH flights count: { lines( lt_lh ) }|.
+"#;
+        let mut options = CompileOptions::default();
+        options.run = true;
+        options.mode = Some(LanguageMode::Standard);
+
+        let res = compile_source(source, options);
+        assert!(res.ok, "Select where test failed: {:?}", res.diagnostics);
+        let vm = res.vm.expect("VM result should be present");
+        assert_eq!(vm.output, vec!["LH flights count: 2"]);
     }
 }
