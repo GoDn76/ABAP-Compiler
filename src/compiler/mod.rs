@@ -489,4 +489,48 @@ WRITE: / 'Step ->', ls_audit-step_id.
         let vm = res.vm.expect("VM result should be present");
         assert_eq!(vm.output, vec!["Step -> S1"]);
     }
+
+    #[test]
+    fn test_assignment_string_template_and_flexible_write() {
+        let source = r#"
+REPORT zaudit_pass.
+DATA: BEGIN OF ls_audit,
+        step_id TYPE string,
+        result TYPE string,
+      END OF ls_audit.
+ls_audit-step_id = 'S1'.
+ls_audit-result = |PASSED at { sy-tabix }|.
+WRITE / 'Step'.
+WRITE ls_audit-step_id.
+WRITE / ls_audit-result.
+"#;
+        let mut options = CompileOptions::default();
+        options.run = true;
+        options.mode = Some(LanguageMode::Standard);
+
+        let res = compile_source(source, options);
+        assert!(res.ok, "Audit pass test failed: {:?}", res.diagnostics);
+        let vm = res.vm.expect("VM result should be present");
+        assert_eq!(vm.output, vec!["Step S1", "PASSED at 0"]);
+    }
+
+    #[test]
+    fn test_write_statement_flexible_multiple_items_and_slashes() {
+        let source = r#"
+REPORT zwrite_flex.
+DATA: lv_a TYPE string VALUE 'Alpha',
+      lv_b TYPE string VALUE 'Beta'.
+WRITE / 'Item 1' lv_a.
+WRITE: / 'Item 2', lv_b.
+WRITE / 'Line 3' / 'Line 4'.
+"#;
+        let mut options = CompileOptions::default();
+        options.run = true;
+        options.mode = Some(LanguageMode::Standard);
+
+        let res = compile_source(source, options);
+        assert!(res.ok, "Write flex test failed: {:?}", res.diagnostics);
+        let vm = res.vm.expect("VM result should be present");
+        assert_eq!(vm.output, vec!["Item 1 Alpha", "Item 2 Beta", "Line 3", "Line 4"]);
+    }
 }

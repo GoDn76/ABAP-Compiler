@@ -36,6 +36,7 @@ pub struct Parser {
     types: Vec<TypeDecl>,
     classes: Vec<ClassDecl>,
     diagnostics: DiagnosticBag,
+    in_write: bool,
 }
 
 impl Parser {
@@ -47,6 +48,7 @@ impl Parser {
             types: Vec::new(),
             classes: Vec::new(),
             diagnostics: DiagnosticBag::new(),
+            in_write: false,
         }
     }
 
@@ -1641,10 +1643,7 @@ impl Parser {
         let mut values = Vec::new();
         let mut newline = false;
 
-        if self.current().lexeme == "/" {
-            newline = true;
-            self.consume();
-        }
+        self.in_write = true;
 
         while !self.at(TokenKind::EOF) && !self.at(TokenKind::Dot) {
             if self.at(TokenKind::Comma) {
@@ -1652,6 +1651,7 @@ impl Parser {
                 continue;
             }
             if self.current().lexeme == "/" {
+                newline = true;
                 self.consume();
                 if let Some(last) = groups.last() {
                     if !last.is_empty() {
@@ -1660,17 +1660,20 @@ impl Parser {
                 }
                 continue;
             }
+
             let value = self.parse_expression(0);
             values.push(value.clone());
             if let Some(last) = groups.last_mut() {
                 last.push(value);
             }
+
             if self.at(TokenKind::Comma) {
                 self.consume();
-            } else if !self.at(TokenKind::Dot) && self.current().lexeme != "/" {
-                break;
             }
         }
+
+        self.in_write = false;
+
         let e = self.expect_dot("Expected \".\" after WRITE.");
         groups.retain(|g| !g.is_empty());
         Statement::WriteStmt {
@@ -2602,8 +2605,17 @@ impl Parser {
     }
 
     fn parse_expression(&mut self, min_prec: i32) -> Expr {
-        let mut left = self.parse_prefix();
+        let mut left = match self.current().kind {
+            TokenKind::StringTemplate => {
+                let tok = self.consume();
+                self.parse_string_template(&tok)
+            }
+            _ => self.parse_prefix(),
+        };
         while !self.at(TokenKind::EOF) {
+            if self.in_write && self.current().lexeme == "/" {
+                break;
+            }
             let op = self.current().upper.clone();
             let prec = PREC.get(op.as_str()).copied().unwrap_or(-1);
             if prec < min_prec {
@@ -2625,6 +2637,10 @@ impl Parser {
     }
 
     fn parse_prefix(&mut self) -> Expr {
+        if self.at(TokenKind::StringTemplate) {
+            let tok = self.consume();
+            return self.parse_string_template(&tok);
+        }
         let t = self.current().clone();
         if t.upper == "NOT" || t.lexeme == "-" {
             self.consume();
@@ -2656,7 +2672,7 @@ impl Parser {
                 };
                 continue;
             }
-            if self.current().lexeme == "-" && self.current().start.offset == base.end_pos().offset {
+            if self.current().lexeme == "-" && (self.current().start.offset == base.end_pos().offset || self.peek(1).kind == TokenKind::Identifier || self.peek(1).kind == TokenKind::Keyword) {
                 self.consume();
                 if let Some(f) = self.expect_identifier("Expected component name after -.") {
                     let b_start = base.start_pos();
@@ -3014,7 +3030,9 @@ impl Parser {
                 if !trimmed.is_empty() {
                     let (tokens, diags) = Lexer::new(trimmed).tokenize();
                     self.diagnostics.extend(diags);
-                    let expr = Parser::new(tokens).parse_expression(0);
+                    let mut sub_parser = Parser::new(tokens);
+                    let expr = sub_parser.parse_expression(0);
+                    self.diagnostics.extend(sub_parser.diagnostics);
                     parts.push(expr);
                 }
             } else {
@@ -3193,7 +3211,7 @@ impl Parser {
     }
 
     fn expect_operator(&mut self, op: &str, msg: &str) -> Option<Token> {
-        if self.current().kind == TokenKind::Operator && self.current().lexeme == op {
+        if self.current().lexeme == op {
             Some(self.consume())
         } else {
             self.diagnostics.error("PAR999", msg, self.current().start, self.current().end);
