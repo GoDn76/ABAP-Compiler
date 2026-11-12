@@ -69,8 +69,10 @@ function notice(message, type='info') {
   const el = document.createElement('div'); el.id='transient-notice'; el.className=`notice ${type}`; el.innerHTML=message;
   $('screen').prepend(el);
 }
-async function jsonGet(url) { const r = await fetch(url); const d = await r.json(); if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`); return d; }
-async function jsonPost(url, body) { const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const d=await r.json(); if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`); return d; }
+const API_BASE = (window.API_BASE_URL || localStorage.getItem('ABAPC_API_BASE') || '').replace(/\/$/, '');
+const apiUrl = path => (path.startsWith('http') ? path : (API_BASE ? `${API_BASE}${path}` : path));
+async function jsonGet(url) { const r = await fetch(apiUrl(url)); const d = await r.json(); if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`); return d; }
+async function jsonPost(url, body) { const r = await fetch(apiUrl(url),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const d=await r.json(); if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`); return d; }
 function renderCurrent() {
   switch (state.current) {
     case 'S000': renderHome(); break;
@@ -414,4 +416,5 @@ document.querySelectorAll('[data-app-command]').forEach(b=>b.addEventListener('c
 function showToast(text){const el=$('sap-message-toast');el.textContent=text;el.classList.add('visible');clearTimeout(window.__sapToastTimer);window.__sapToastTimer=setTimeout(()=>el.classList.remove('visible'),3000);setStatus(text);}
 function saveLocalDraft(){const source=$('gui-source');if(!source){showToast('No editor draft on this screen. Open SE38 first.');return;}try{const draft={source:source.value,filename:$('gui-filename')?.value||'program.abap',mode:$('gui-mode')?.value||'cloud',savedAt:new Date().toISOString()};localStorage.setItem('abapc-editor-draft',JSON.stringify(draft));showToast(`Draft saved locally: ${draft.filename}`)}catch{showToast('Could not save draft to this browser storage.')}}
 window.addEventListener('keydown',e=>{if(e.shiftKey&&e.key==='F3'){e.preventDefault();goTo('S000')}else if(e.key==='F3'){e.preventDefault();goTo(state.stack.pop()||'S000',false)}else if(e.key==='F12'){e.preventDefault();$('cancel').click()}else if(e.key==='F1'){e.preventDefault();$('help-screen').click()}else if(e.ctrlKey&&e.key.toLowerCase()==='s'){e.preventDefault();saveLocalDraft()}else if(e.ctrlKey&&e.key.toLowerCase()==='g'){e.preventDefault();$('command').focus();$('command').select()}});
+const chip=document.querySelector('.system-chip');if(chip){chip.style.cursor='pointer';chip.title='Click to configure Backend URL (Vercel / VPS)';chip.addEventListener('click',()=>{const cur=localStorage.getItem('ABAPC_API_BASE')||(window.API_BASE_URL||'');const next=prompt('Enter ABAPC Backend URL (e.g. https://your-vps.com:7345, or empty for same-origin):',cur);if(next!==null){if(next.trim()){localStorage.setItem('ABAPC_API_BASE',next.trim().replace(/\/$/,''));}else{localStorage.removeItem('ABAPC_API_BASE');}location.reload();}});}
 (async()=>{try{const c=await jsonGet('/api/config');$('clock').textContent=`${c.version||'local'} · INS`;}catch{$('clock').textContent='INS';}await loadExamples();renderRecentTree();goTo('S000',false);})();

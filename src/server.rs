@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::RwLock;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 
 pub fn create_router(state: AppState) -> Router {
@@ -24,6 +25,10 @@ pub fn create_router(state: AppState) -> Router {
     let max_body = state.config.max_body_bytes;
 
     let api = api_routes(state.clone());
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
 
     Router::new()
         .merge(api)
@@ -33,6 +38,7 @@ pub fn create_router(state: AppState) -> Router {
             move || serve_named_file(app_dir, "gui.html")
         }))
         .fallback(get(move |req: Request| serve_static_file(state.config.app_dir.clone(), req)))
+        .layer(cors)
         .layer(middleware::from_fn(security_headers_middleware))
         .layer(RequestBodyLimitLayer::new(max_body))
 }

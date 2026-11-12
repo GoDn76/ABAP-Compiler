@@ -32,3 +32,10 @@ redis = { version = "0.25", default-features = false, features = ["tokio-comp", 
 [features]
 default = []
 database = ["dep:sqlx", "dep:redis"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

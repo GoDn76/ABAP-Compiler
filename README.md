@@ -66,6 +66,73 @@ cargo build --release --manifest-path "Project req/Cargo.toml"
 
 ---
 
+## Parity Verification Testing
+
+To verify that the Rust backend behaves identically to the TypeScript/Node.js backend, run the parity test suite:
+
+### 1. Run via Node.js Parity Runner (15 End-to-End Scenarios)
+With the Rust backend running on port 7345:
+```bash
+node scripts/test-parity.mjs
+```
+Or specify a custom port or remote URL:
+```bash
+node scripts/test-parity.mjs --port 7346
+node scripts/test-parity.mjs --url https://your-vps.com:7345
+```
+Or on Windows PowerShell:
+```powershell
+.\scripts\test-parity.ps1 -Port 7345
+```
+
+### 2. Run Native Rust Unit & Integration Tests
+```bash
+cargo test
+```
+
+---
+
+## Deploying Frontend to Vercel
+
+The frontend located in `frontend/` (or `app/`) is 100% static and can be deployed directly to Vercel in seconds:
+
+1. **Deploy with Vercel CLI:**
+   ```bash
+   cd frontend
+   vercel deploy --prod
+   ```
+2. **Configure Remote Backend URL:**
+   - In the deployed web application, click the **`⚙ API`** button in the header toolbar (or click the **`LOCAL · CLIENT 001`** system chip in SAP GUI).
+   - Enter your VPS backend URL (e.g. `https://your-vps.com:7345`).
+   - The setting is saved to `localStorage` and will route all IDE compilation and SAP GUI transactions to your VPS backend over CORS.
+
+---
+
+## Deploying Rust Backend to a 2GB RAM VPS
+
+The Rust backend is compiled to native machine code and operates with an idle footprint of **~12MB to 25MB RAM**, making it exceptionally well-suited for a 2GB RAM / 1 vCPU VPS.
+
+### 1. Cross-Compile or Build on VPS
+On the VPS (Ubuntu/Debian):
+```bash
+sudo apt update && sudo apt install -y build-essential pkg-config libssl-dev
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+
+cargo build --release
+```
+
+### 2. Run as a Systemd Background Service
+Copy the provided unit file:
+```bash
+sudo cp abapc.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now abapc
+sudo systemctl status abapc
+```
+
+---
+
 ## Running with Docker Compose
 
 Spin up the Rust server, Redis session buffer, and PostgreSQL database:
