@@ -92,50 +92,53 @@ cargo test
 
 ---
 
-## Deploying Frontend to Vercel
+## Local Execution & Running Commands
 
-The frontend located in `frontend/` (or `app/`) is 100% static and can be deployed directly to Vercel in seconds:
+You can run both the frontend and backend together using the built-in Axum static file server, or run them in separate processes for independent frontend development.
 
-1. **Deploy with Vercel CLI:**
+### Method 1: Unified Execution (Recommended)
+The Rust server serves both the complete REST API and the frontend UI (`app/` or `frontend/`):
+
+```bash
+cd "Project req"
+cargo run
+```
+*(Or optimized: `cargo run --release`)*
+
+Once running:
+- **Compiler IDE (ABAP Editor)**: [http://127.0.0.1:7345](http://127.0.0.1:7345)
+- **SAP GUI Practice Simulator**: [http://127.0.0.1:7345/sapgui](http://127.0.0.1:7345/sapgui)
+
+*Note: If port 7345 is already in use by another server, the Rust server will automatically bind to the next available port (e.g. 7346).*
+
+---
+
+### Method 2: Running Frontend and Backend Separately
+
+If you prefer to run the frontend independently:
+
+1. **Start the Rust Backend:**
    ```bash
-   cd frontend
-   vercel deploy --prod
+   cd "Project req"
+   cargo run
    ```
-2. **Configure Remote Backend URL:**
-   - In the deployed web application, click the **`⚙ API`** button in the header toolbar (or click the **`LOCAL · CLIENT 001`** system chip in SAP GUI).
-   - Enter your VPS backend URL (e.g. `https://your-vps.com:7345`).
-   - The setting is saved to `localStorage` and will route all IDE compilation and SAP GUI transactions to your VPS backend over CORS.
+   *(Backend starts on `http://127.0.0.1:7345` with full CORS enabled)*
+
+2. **Serve the Frontend:**
+   In another terminal, serve the `frontend/` folder with any local HTTP server:
+   ```bash
+   cd "Project req/frontend"
+   npx serve -l 3000
+   # or using Python:
+   # python -m http.server 3000
+   ```
+3. Open `http://localhost:3000`. In the top toolbar, click **`⚙ API`** and enter `http://127.0.0.1:7345` to route all editor compiles and SAP GUI transactions to your Rust backend.
 
 ---
 
-## Deploying Rust Backend to a 2GB RAM VPS
+### Method 3: Running with Docker Compose
 
-The Rust backend is compiled to native machine code and operates with an idle footprint of **~12MB to 25MB RAM**, making it exceptionally well-suited for a 2GB RAM / 1 vCPU VPS.
-
-### 1. Cross-Compile or Build on VPS
-On the VPS (Ubuntu/Debian):
-```bash
-sudo apt update && sudo apt install -y build-essential pkg-config libssl-dev
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
-
-cargo build --release
-```
-
-### 2. Run as a Systemd Background Service
-Copy the provided unit file:
-```bash
-sudo cp abapc.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now abapc
-sudo systemctl status abapc
-```
-
----
-
-## Running with Docker Compose
-
-Spin up the Rust server, Redis session buffer, and PostgreSQL database:
+Spin up the Rust server, Redis session buffer, and PostgreSQL database locally:
 
 ```bash
 cd "Project req"

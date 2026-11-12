@@ -1,4 +1,69 @@
+# ==============================================================================
+# ABAPC Studio - Git Ignore Configuration
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Build & Rust Artifacts
+# ------------------------------------------------------------------------------
 target/
+**/*.rs.bk
+*.pdb
+
+# ------------------------------------------------------------------------------
+# Environment & Secret Credentials (Never commit secrets)
+# ------------------------------------------------------------------------------
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+
+# ------------------------------------------------------------------------------
+# Deployment & Hosting Specifics (Excluded from source repository)
+# ------------------------------------------------------------------------------
+*.service
+vercel.json
+**/vercel.json
+.vercel/
+deploy/
+*deployment*
+
+# ------------------------------------------------------------------------------
+# Agent Notes, Ponytail, Assessments, Transcripts & AI Artifacts
+# ------------------------------------------------------------------------------
+*assessment*.md
+*ponytail*.md
+*agent*.md
+*notes*.md
+*.transcript*
+*.prompt*
+scratch/
+.brain/
+.system_generated/
+.gemini/
+.antigravity/
+
+# ------------------------------------------------------------------------------
+# IDE, Editor & OS Files
+# ------------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ------------------------------------------------------------------------------
+# Local Runtime Outputs & Temporary Files
+# ------------------------------------------------------------------------------
 executed codes/*.abap
+!executed codes/.gitkeep
 *.log
+node_modules/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
