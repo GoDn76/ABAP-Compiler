@@ -1,0 +1,92 @@
+{
+  "tables": {
+    "SCARR": [
+      {
+        "CARRID": "LH",
+        "CARRNAME": "Lufthansa",
+        "CURRCODE": "EUR"
+      },
+      {
+        "CARRID": "AA",
+        "CARRNAME": "American Airlines",
+        "CURRCODE": "USD"
+      },
+      {
+        "CARRID": "SQ",
+        "CARRNAME": "Singapore Airlines",
+        "CURRCODE": "SGD"
+      }
+    ],
+    "SPFLI": [
+      {
+        "CARRID": "LH",
+        "CONNID": 400,
+        "COUNTRYFR": "DE",
+        "CITYFROM": "Frankfurt",
+        "COUNTRYTO": "US",
+        "CITYTO": "New York"
+      },
+      {
+        "CARRID": "LH",
+        "CONNID": 401,
+        "COUNTRYFR": "DE",
+        "CITYFROM": "Munich",
+        "COUNTRYTO": "JP",
+        "CITYTO": "Tokyo"
+      },
+      {
+        "CARRID": "SQ",
+        "CONNID": 88,
+        "COUNTRYFR": "SG",
+        "CITYFROM": "Singapore",
+        "COUNTRYTO": "IN",
+        "CITYTO": "Mumbai"
+      }
+    ],
+    "SFLIGHT": [
+      {
+        "CARRID": "LH",
+        "CONNID": 400,
+        "FLDATE": "2026-10-01",
+        "PRICE": 520
+      },
+      {
+        "CARRID": "LH",
+        "CONNID": 401,
+        "FLDATE": "2026-10-02",
+        "PRICE": 610
+      },
+      {
+        "CARRID": "SQ",
+        "CONNID": 88,
+        "FLDATE": "2026-10-03",
+        "PRICE": 430
+      }
+    ],
+    "ZPRODUCT": [
+      {
+        "PRODUCT_ID": "P-100",
+        "PRODUCT_NAME": "Keyboard",
+        "CATEGORY": "ACCESSORY",
+        "PRICE": 1200,
+        "CURRENCY": "INR"
+      },
+      {
+        "PRODUCT_ID": "P-200",
+        "PRODUCT_NAME": "Mouse",
+        "CATEGORY": "ACCESSORY",
+        "PRICE": 700,
+        "CURRENCY": "INR"
+      },
+      {
+        "PRODUCT_ID": "P-300",
+        "PRODUCT_NAME": "Monitor",
+        "CATEGORY": "DISPLAY",
+        "PRICE": 15000,
+        "CURRENCY": "INR"
+      }
+    ]
+  },
+  "views": [],
+  "objects": []
+}

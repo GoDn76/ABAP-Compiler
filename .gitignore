@@ -1,0 +1,4 @@
+target/
+.env
+executed codes/*.abap
+*.log

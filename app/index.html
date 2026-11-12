@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>ABAPC Studio</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">A</div>
+      <div><div class="title">ABAPC Studio</div><div class="subtitle">Local ABAP + ABAP Cloud compiler</div></div>
+    </div>
+    <div class="toolbar">
+      <a id="sapgui" class="secondary" href="/sapgui" style="text-decoration:none" title="Open SAP GUI-style transaction workbench">▦ Transaction GUI</a>
+      <select id="example" title="Open example"><option value="">Examples…</option></select>
+      <select id="mode" title="Compiler language version"><option value="standard">Standard ABAP</option><option value="cloud">ABAP Cloud</option></select>
+      <input id="filename" value="program.abap" aria-label="File name" />
+      <button id="build" class="secondary">Build</button>
+      <button id="run" class="primary">▶ Run</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="sidebar left">
+      <div class="section-head"><span>Executed codes</span><button id="refresh" class="icon-btn" title="Refresh history">↻</button></div>
+      <div class="hint">Every Run is archived automatically.</div>
+      <div id="history" class="history"></div>
+    </aside>
+
+    <section class="editor-area">
+      <div class="editor-toolbar">
+        <span id="status" class="status-dot ready">Ready</span>
+        <span id="save-path" class="save-path"></span>
+        <span id="metrics" class="metrics">0 lines • 0 chars</span>
+      </div>
+      <div class="editor-wrap">
+        <div id="gutter" class="gutter">1</div>
+        <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" aria-label="ABAP source editor"></textarea>
+      </div>
+      <div class="shortcuts">
+        <span><kbd>Ctrl</kbd>/<kbd>⌘</kbd> <kbd>Enter</kbd> Run</span>
+        <span><kbd>F6</kbd> Build</span>
+        <span><kbd>Tab</kbd> indent</span>
+      </div>
+    </section>
+
+    <aside class="right-panel">
+      <div class="result-head">
+        <div class="tabs">
+          <button class="tab active" data-tab="output">Output</button>
+          <button class="tab" data-tab="diagnostics">Diagnostics</button>
+          <button class="tab" data-tab="variables">Variables</button>
+          <button class="tab" data-tab="ir">IR</button>
+        </div>
+      </div>
+      <section id="output" class="result-body"></section>
+      <section id="diagnostics" class="result-body hidden"></section>
+      <section id="variables" class="result-body hidden"></section>
+      <section id="ir" class="result-body hidden"></section>
+    </aside>
+  </main>
+
+  <footer>
+    <span>ABAPC Studio 5.0.1</span>
+    <span id="cloud-info">Cloud manifest: loading…</span>
+    <span>Local-only • 127.0.0.1</span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
