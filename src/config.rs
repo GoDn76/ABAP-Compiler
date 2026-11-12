@@ -46,6 +46,18 @@ impl AppConfig {
         let database_url = env::var("DATABASE_URL").ok().filter(|s| !s.is_empty());
         let redis_url = env::var("REDIS_URL").ok().filter(|s| !s.is_empty());
 
+        let app_dir = env::var("ABAPC_APP_DIR").unwrap_or_else(|_| {
+            if Path::new("frontend").exists() {
+                "frontend".to_string()
+            } else if Path::new("app").exists() {
+                "app".to_string()
+            } else if Path::new("../frontend").exists() {
+                "../frontend".to_string()
+            } else {
+                resolve_path("app")
+            }
+        });
+
         Self {
             host,
             port,
@@ -54,7 +66,7 @@ impl AppConfig {
             no_browser,
             database_url,
             redis_url,
-            app_dir: resolve_path("app"),
+            app_dir,
             executed_dir: resolve_path("executed codes"),
             examples_dir: resolve_path("examples"),
             manifest_path: resolve_path("runtime/released-apis.json"),
