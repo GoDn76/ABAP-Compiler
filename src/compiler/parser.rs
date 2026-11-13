@@ -255,7 +255,12 @@ impl Parser {
         {
             return Some(vec![self.parse_method_call()]);
         }
-        if self.at(TokenKind::Identifier) || self.at(TokenKind::Keyword) || self.at(TokenKind::LParen) {
+        if self.at(TokenKind::Identifier)
+            || self.at(TokenKind::Keyword)
+            || self.at(TokenKind::LParen)
+            || self.current().kind == TokenKind::Identifier
+            || self.current().lexeme.contains('-')
+        {
             return Some(vec![self.parse_assignment()]);
         }
 
@@ -1645,12 +1650,13 @@ impl Parser {
 
         self.in_write = true;
 
-        while !self.at(TokenKind::EOF) && !self.at(TokenKind::Dot) {
+        while !self.at(TokenKind::Dot) && !self.at(TokenKind::EOF) {
             if self.at(TokenKind::Comma) {
                 self.consume();
                 continue;
             }
-            if self.current().lexeme == "/" {
+
+            if (self.current().kind == TokenKind::Operator && self.current().lexeme == "/") || self.current().lexeme == "/" {
                 newline = true;
                 self.consume();
                 if let Some(last) = groups.last() {
@@ -1658,7 +1664,14 @@ impl Parser {
                         groups.push(Vec::new());
                     }
                 }
+                if self.at(TokenKind::Dot) || self.at(TokenKind::EOF) {
+                    break;
+                }
                 continue;
+            }
+
+            if self.at(TokenKind::Dot) || self.at(TokenKind::EOF) {
+                break;
             }
 
             let value = self.parse_expression(0);
@@ -2592,7 +2605,11 @@ impl Parser {
     fn parse_assignment(&mut self) -> Statement {
         let start = self.current().start;
         let target = self.parse_postfix();
-        self.expect_operator("=", "Expected = in assignment.");
+        if self.current().lexeme == "=" || self.current().lexeme == "?=" || (self.current().kind == TokenKind::Operator && (self.current().lexeme == "=" || self.current().lexeme == "?=")) {
+            self.consume();
+        } else {
+            self.expect_operator("=", "Expected = in assignment.");
+        }
         let value = self.parse_expression(0);
         let e = self.expect_dot("Expected \".\" after assignment.");
         let val_end = value.end_pos();
