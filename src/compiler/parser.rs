@@ -18,6 +18,20 @@ static PREC: LazyLock<HashMap<&'static str, i32>> = LazyLock::new(|| {
     m.insert("<=", 3);
     m.insert(">", 3);
     m.insert(">=", 3);
+    m.insert("EQ", 3);
+    m.insert("NE", 3);
+    m.insert("LT", 3);
+    m.insert("GT", 3);
+    m.insert("LE", 3);
+    m.insert("GE", 3);
+    m.insert("CP", 3);
+    m.insert("NP", 3);
+    m.insert("CS", 3);
+    m.insert("NS", 3);
+    m.insert("CA", 3);
+    m.insert("NA", 3);
+    m.insert("CO", 3);
+    m.insert("CN", 3);
     m.insert("IS", 3);
     m.insert("IN", 3);
     m.insert("+", 4);
@@ -33,8 +47,12 @@ pub struct Parser {
     tokens: Vec<Token>,
     i: usize,
     report_name: Option<String>,
+    report_span: Option<(Position, Position)>,
     types: Vec<TypeDecl>,
     classes: Vec<ClassDecl>,
+    pub interfaces: Vec<InterfaceDef>,
+    pub class_defs: Vec<ClassDef>,
+    pub class_impls: Vec<ClassImpl>,
     diagnostics: DiagnosticBag,
     in_write: bool,
 }
@@ -45,8 +63,12 @@ impl Parser {
             tokens,
             i: 0,
             report_name: None,
+            report_span: None,
             types: Vec::new(),
             classes: Vec::new(),
+            interfaces: Vec::new(),
+            class_defs: Vec::new(),
+            class_impls: Vec::new(),
             diagnostics: DiagnosticBag::new(),
             in_write: false,
         }
@@ -72,6 +94,7 @@ impl Parser {
                 | Statement::InlineDataAssign { end, .. }
                 | Statement::ConstantDecl { end, .. }
                 | Statement::Assignment { end, .. }
+                | Statement::Assign { end, .. }
                 | Statement::WriteStmt { end, .. }
                 | Statement::IfStmt { end, .. }
                 | Statement::WhileStmt { end, .. }
@@ -95,6 +118,8 @@ impl Parser {
                 | Statement::AssertStmt { end, .. }
                 | Statement::CallFunction { end, .. }
                 | Statement::MethodCallStmt { end, .. }
+                | Statement::MethodCall { end, .. }
+                | Statement::RaiseStmt { end, .. }
                 | Statement::EmlReadStmt { end, .. }
                 | Statement::EmlModifyStmt { end, .. }
                 | Statement::EmlTransactionStmt { end, .. }
@@ -103,6 +128,10 @@ impl Parser {
                 | Statement::EmptyStmt { end, .. } => *end,
                 Statement::ClassDecl(c) => c.end,
                 Statement::TypeDecl(t) => t.end,
+                Statement::InterfaceDecl(i) => i.end,
+                Statement::ClassDefStmt(c) => c.end,
+                Statement::ClassImplStmt(c) => c.end,
+                Statement::CreateObject(c) => c.end,
             })
             .unwrap_or(first.end);
 
@@ -110,9 +139,13 @@ impl Parser {
             start: first.start,
             end: end_pos,
             report_name: self.report_name,
+            report_span: self.report_span,
             statements,
             types: self.types,
             classes: self.classes,
+            interfaces: self.interfaces,
+            class_defs: self.class_defs,
+            class_impls: self.class_impls,
         };
 
         (program, self.diagnostics)
@@ -136,6 +169,12 @@ impl Parser {
 
         if self.is_keyword("REPORT") {
             return self.parse_report().map(|s| vec![s]);
+        }
+        if self.is_keyword("INTERFACE") {
+            return Some(vec![self.parse_interface()]);
+        }
+        if self.is_keyword("CREATE") && self.peek(1).upper == "OBJECT" {
+            return Some(vec![self.parse_create_object()]);
         }
         if self.is_keyword("PROGRAM") {
             return self.parse_simple_header().map(|s| vec![s]);
@@ -206,8 +245,11 @@ impl Parser {
         if self.is_keyword("READ") {
             return Some(vec![self.parse_read_table()]);
         }
-        if self.is_keyword("MODIFY") && self.peek(1).upper == "ENTITIES" {
-            return Some(vec![self.parse_eml_modify()]);
+        if self.is_keyword("MODIFY") {
+            if self.peek(1).upper == "ENTITIES" {
+                return Some(vec![self.parse_eml_modify()]);
+            }
+            return Some(vec![self.parse_modify_table()]);
         }
         if self.is_keyword("COMMIT") || self.is_keyword("ROLLBACK") {
             return Some(vec![self.parse_eml_transaction()]);
@@ -246,14 +288,25 @@ impl Parser {
         if self.is_keyword("TRY") {
             return Some(vec![self.parse_try()]);
         }
+        if self.is_keyword("FIELD-SYMBOLS") || self.is_keyword("FIELD-SYMBOL") {
+            return self.parse_field_symbols();
+        }
+        if self.is_keyword("ASSIGN") {
+            return Some(vec![self.parse_assign_to()]);
+        }
         if self.is_keyword("CLASS") {
             return Some(vec![Statement::ClassDecl(self.parse_class())]);
         }
+        if self.is_keyword("RAISE") {
+            return Some(vec![self.parse_raise()]);
+        }
         if (self.at(TokenKind::Identifier) || self.at(TokenKind::Keyword))
-            && self.peek(1).kind == TokenKind::Arrow
-            && self.peek(3).kind == TokenKind::LParen
+            && (self.peek(1).kind == TokenKind::Arrow || self.peek(1).kind == TokenKind::Tilde)
         {
-            return Some(vec![self.parse_method_call()]);
+            if self.peek(1).lexeme == "->" && self.peek(3).lexeme == "=" {
+                return Some(vec![self.parse_assignment()]);
+            }
+            return Some(vec![self.parse_method_call_statement()]);
         }
         if self.at(TokenKind::Identifier)
             || self.at(TokenKind::Keyword)
@@ -277,12 +330,14 @@ impl Parser {
         let start = self.consume();
         let name = self.expect_identifier("Expected report name after REPORT.");
         self.expect_dot("Expected \".\" after REPORT.");
+        let end_pos = self.previous().end;
         if let Some(n) = name {
             self.report_name = Some(n.lexeme);
+            self.report_span = Some((start.start, end_pos));
         }
         Some(Statement::EmptyStmt {
             start: start.start,
-            end: self.previous().end,
+            end: end_pos,
         })
     }
 
@@ -312,6 +367,84 @@ impl Parser {
         })
     }
 
+    fn parse_field_symbols(&mut self) -> Option<Vec<Statement>> {
+        let start = self.consume();
+        let mut out = Vec::new();
+        if self.at(TokenKind::Colon) {
+            self.consume();
+        }
+
+        while !self.at(TokenKind::EOF) {
+            let name = self.expect_identifier("Expected field symbol name.");
+            let name_tok = match name {
+                Some(n) => n,
+                None => {
+                    self.recover_statement();
+                    break;
+                }
+            };
+
+            let mut type_ref = None;
+            while !self.at(TokenKind::Dot) && !self.at(TokenKind::Comma) && !self.at(TokenKind::EOF) {
+                if self.is_keyword("TYPE") || self.is_keyword("LIKE") {
+                    self.consume();
+                    type_ref = self.parse_type();
+                } else {
+                    self.consume();
+                }
+            }
+
+            let final_type = type_ref.unwrap_or_else(|| TypeRef::scalar("any"));
+            let is_comma = self.at(TokenKind::Comma);
+            let end_tok = if is_comma {
+                self.consume()
+            } else {
+                self.expect_dot("Expected \".\" after FIELD-SYMBOLS declaration.").unwrap_or_else(|| name_tok.clone())
+            };
+
+            out.push(Statement::DataDecl {
+                start: start.start,
+                end: end_tok.end,
+                name: name_tok.lexeme,
+                type_ref: final_type,
+                value: None,
+                inline: Some(false),
+                parameter: None,
+                obligatory: None,
+                checkbox: None,
+                selection_options: None,
+                no_intervals: None,
+                no_extension: None,
+                for_field: None,
+                radiobutton_group: None,
+                lower_case: None,
+                no_display: None,
+                value_help: None,
+            });
+
+            if !is_comma {
+                break;
+            }
+        }
+        Some(out)
+    }
+
+    fn parse_assign_to(&mut self) -> Statement {
+        let start = self.consume();
+        let source = self.parse_expression(0);
+        self.expect_keyword("TO", "Expected TO after ASSIGN source.");
+        let target_tok = self.expect_identifier("Expected field symbol after TO.");
+        let e = self.expect_dot("Expected \".\" after ASSIGN statement.");
+        let target_name = target_tok.map(|t| t.lexeme).unwrap_or_else(|| "<UNKNOWN>".to_string());
+        let end_pos = e.map(|tok| tok.end).unwrap_or(start.end);
+        Statement::Assign {
+            start: start.start,
+            end: end_pos,
+            source,
+            target: target_name,
+        }
+    }
+
     fn parse_data(&mut self) -> Option<Vec<Statement>> {
         let start = self.consume();
         let mut out = Vec::new();
@@ -320,6 +453,27 @@ impl Parser {
         }
 
         while !self.at(TokenKind::EOF) {
+            if self.at(TokenKind::LParen) {
+                // Inline declaration syntax: DATA(var) = ...
+                self.consume();
+                let inline_name = self.expect_identifier("Expected inline data object name.");
+                self.expect(TokenKind::RParen, "Expected ) after inline data object name.");
+                if self.at(TokenKind::Operator) && self.current().lexeme == "=" {
+                    self.consume();
+                    let value = self.parse_expression(0);
+                    let end = self.expect_dot("Expected period after inline DATA assignment.");
+                    if let Some(n) = inline_name {
+                        out.push(Statement::InlineDataAssign {
+                            name: n.lexeme,
+                            value: value.clone(),
+                            start: start.start,
+                            end: end.map(|e| e.end).unwrap_or(value.end_pos()),
+                        });
+                    }
+                    return Some(out);
+                }
+            }
+
             if self.match_keyword("BEGIN") && self.match_keyword("OF") {
                 let name = self.expect_identifier("Expected structure data object name.");
                 self.match_kind(TokenKind::Comma);
@@ -391,11 +545,70 @@ impl Parser {
                     break;
                 }
             };
-            self.expect_keyword("TYPE", "Expected TYPE in DATA declaration.");
-            let type_ref = self.parse_type().unwrap_or_else(|| TypeRef::scalar("any"));
+
+            // Optional legacy length syntax: lv_name(10)
+            let mut inline_len = None;
+            if self.at(TokenKind::LParen) {
+                self.consume();
+                if self.at(TokenKind::Integer) {
+                    inline_len = self.current().lexeme.parse::<usize>().ok();
+                    self.consume();
+                }
+                self.expect(TokenKind::RParen, "Expected ) after length.");
+            }
+
+            let mut type_ref = None;
+            let mut length = inline_len;
+            let mut _decimals = None;
             let mut value = None;
-            if self.match_keyword("VALUE") {
-                value = Some(self.parse_expression(0));
+            let mut _is_read_only = false;
+            let mut _is_boxed = false;
+
+            // Permutation of attributes until Dot or Comma (for chained declarations)
+            while !self.at(TokenKind::Dot) && !self.at(TokenKind::Comma) && !self.at(TokenKind::EOF) {
+                if self.is_keyword("TYPE") || self.is_keyword("LIKE") {
+                    self.consume();
+                    type_ref = self.parse_type();
+                } else if self.is_keyword("LENGTH") {
+                    self.consume();
+                    if self.at(TokenKind::Integer) {
+                        length = self.current().lexeme.parse::<usize>().ok();
+                        self.consume();
+                    } else {
+                        let _ = self.parse_expression(0);
+                    }
+                } else if self.is_keyword("DECIMALS") {
+                    self.consume();
+                    if self.at(TokenKind::Integer) {
+                        _decimals = self.current().lexeme.parse::<i64>().ok();
+                        self.consume();
+                    } else {
+                        let _ = self.parse_expression(0);
+                    }
+                } else if self.is_keyword("VALUE") {
+                    self.consume();
+                    if self.is_keyword("IS") && self.peek(1).upper == "INITIAL" {
+                        self.consume();
+                        self.consume();
+                    } else {
+                        value = Some(self.parse_expression(0));
+                    }
+                } else if self.is_keyword("READ-ONLY") {
+                    self.consume();
+                    _is_read_only = true;
+                } else if self.is_keyword("BOXED") {
+                    self.consume();
+                    _is_boxed = true;
+                } else {
+                    break;
+                }
+            }
+
+            let mut final_type = type_ref.unwrap_or_else(|| TypeRef::scalar("any"));
+            if let Some(l) = length {
+                if let TypeRef::Scalar { ref mut length, .. } = final_type {
+                    *length = Some(l);
+                }
             }
 
             let end_token = if self.match_kind(TokenKind::Comma) {
@@ -418,7 +631,7 @@ impl Parser {
                 start: start.start,
                 end: end_pos,
                 name: name_tok.lexeme,
-                type_ref,
+                type_ref: final_type,
                 value,
                 inline: Some(false),
                 parameter: None,
@@ -1382,6 +1595,42 @@ impl Parser {
         }
     }
 
+    fn qualify_where_expr(&self, expr: Expr, target: &str) -> Expr {
+        match expr {
+            Expr::Variable { start, end, name } => {
+                if !name.contains('-') && !name.starts_with('<') && !name.to_ascii_uppercase().starts_with("SY") {
+                    Expr::Field {
+                        start,
+                        end,
+                        base: Box::new(Expr::Variable {
+                            start,
+                            end,
+                            name: target.to_string(),
+                        }),
+                        field: name,
+                        static_selector: None,
+                    }
+                } else {
+                    Expr::Variable { start, end, name }
+                }
+            }
+            Expr::Binary { start, end, op, left, right } => Expr::Binary {
+                start,
+                end,
+                op,
+                left: Box::new(self.qualify_where_expr(*left, target)),
+                right: Box::new(self.qualify_where_expr(*right, target)),
+            },
+            Expr::Unary { start, end, op, operand } => Expr::Unary {
+                start,
+                end,
+                op,
+                operand: Box::new(self.qualify_where_expr(*operand, target)),
+            },
+            other => other,
+        }
+    }
+
     fn parse_loop(&mut self) -> Statement {
         let start = self.consume();
         self.expect_keyword("AT", "Expected AT after LOOP.");
@@ -1390,29 +1639,64 @@ impl Parser {
         let mut inline = false;
 
         if self.match_keyword("INTO") || self.match_keyword("ASSIGNING") {
-            self.match_keyword("FIELD-SYMBOL");
-            self.match_kind(TokenKind::At);
-            if self.match_keyword("DATA") {
-                self.match_kind(TokenKind::LParen);
-                let n = self.expect_identifier("Expected inline variable name.");
-                self.expect(TokenKind::RParen, "Expected ).");
-                target = n.map(|t| t.lexeme);
-                inline = true;
-            } else if self.at(TokenKind::LParen) {
-                self.consume();
-                let n = self.expect_identifier("Expected inline variable name.");
-                self.expect(TokenKind::RParen, "Expected ).");
-                target = n.map(|t| t.lexeme);
-                inline = true;
+            if self.match_keyword("FIELD-SYMBOL") || self.match_keyword("FIELD-SYMBOLS") {
+                if self.at(TokenKind::LParen) {
+                    self.consume();
+                    let n = self.expect_identifier("Expected inline field-symbol name.");
+                    self.expect(TokenKind::RParen, "Expected ).");
+                    target = n.map(|t| t.lexeme);
+                    inline = true;
+                } else {
+                    let n = self.expect_identifier("Expected inline field-symbol name.");
+                    target = n.map(|t| t.lexeme);
+                    inline = true;
+                }
             } else {
-                let n = self.expect_identifier("Expected loop target.");
-                target = n.map(|t| t.lexeme);
+                self.match_kind(TokenKind::At);
+                if self.match_keyword("DATA") {
+                    self.match_kind(TokenKind::LParen);
+                    let n = self.expect_identifier("Expected inline variable name.");
+                    self.expect(TokenKind::RParen, "Expected ).");
+                    target = n.map(|t| t.lexeme);
+                    inline = true;
+                } else if self.at(TokenKind::LParen) {
+                    self.consume();
+                    let n = self.expect_identifier("Expected inline variable name.");
+                    self.expect(TokenKind::RParen, "Expected ).");
+                    target = n.map(|t| t.lexeme);
+                    inline = true;
+                } else {
+                    let n = self.expect_identifier("Expected loop target.");
+                    target = n.map(|t| t.lexeme);
+                }
             }
         }
+
+        let mut where_cond = None;
+        if self.is_keyword("WHERE") {
+            self.consume();
+            where_cond = Some(self.parse_expression(0));
+        }
+
         self.expect_dot("Expected \".\" after LOOP header.");
         let mut end_set = HashSet::new();
         end_set.insert("ENDLOOP".to_string());
-        let body = self.parse_block(&end_set);
+        let mut body = self.parse_block(&end_set);
+        if let Some(ref cond) = where_cond {
+            let qualified_cond = if let Some(ref tgt) = target {
+                self.qualify_where_expr(cond.clone(), tgt)
+            } else {
+                cond.clone()
+            };
+            let start_pos = qualified_cond.start_pos();
+            let end_pos = qualified_cond.end_pos();
+            body.insert(0, Statement::FlowStmt {
+                op: "check".to_string(),
+                condition: Some(qualified_cond),
+                start: start_pos,
+                end: end_pos,
+            });
+        }
         self.expect_keyword("ENDLOOP", "Expected ENDLOOP.");
         let e = self.expect_dot("Expected \".\" after ENDLOOP.");
 
@@ -1423,6 +1707,13 @@ impl Parser {
             target,
             inline: Some(inline),
             body,
+            group_by: None,
+            step: None,
+            from: None,
+            to: None,
+            using_key: None,
+            transporting_no_fields: None,
+            where_cond: where_cond.map(Box::new),
         }
     }
 
@@ -1437,6 +1728,13 @@ impl Parser {
             end: e.map(|tok| tok.end).unwrap_or(start.end),
             value,
             table,
+            initial_line: None,
+            lines_of: None,
+            from: None,
+            to: None,
+            assigning: None,
+            reference_into: None,
+            sorted_by: None,
         }
     }
 
@@ -1455,6 +1753,56 @@ impl Parser {
         }
     }
 
+    fn parse_modify_table(&mut self) -> Statement {
+        let start = self.consume();
+        self.match_keyword("TABLE");
+        let table = self.parse_expression(0);
+        let mut from_wa = None;
+        let mut index = None;
+
+        while !self.at(TokenKind::EOF) && !self.at(TokenKind::Dot) {
+            if self.match_keyword("FROM") {
+                from_wa = Some(self.parse_expression(0));
+            } else if self.match_keyword("INDEX") {
+                index = Some(self.parse_expression(0));
+            } else if self.match_keyword("TRANSPORTING") {
+                while !self.at(TokenKind::EOF)
+                    && !self.at(TokenKind::Dot)
+                    && !self.is_keyword("FROM")
+                    && !self.is_keyword("INDEX")
+                    && !self.is_keyword("WHERE")
+                {
+                    self.consume();
+                }
+            } else if self.match_keyword("WHERE") {
+                let _ = self.parse_expression(0);
+            } else {
+                self.consume();
+            }
+        }
+        let e = self.expect_dot("Expected \".\" after MODIFY.");
+        let end = e.map(|tok| tok.end).unwrap_or(start.end);
+
+        if let (Some(wa), Some(idx)) = (from_wa, index) {
+            Statement::Assignment {
+                start: start.start,
+                end,
+                target: Expr::Index {
+                    start: start.start,
+                    end,
+                    base: Box::new(table),
+                    index: Box::new(idx),
+                },
+                value: wa,
+            }
+        } else {
+            Statement::EmptyStmt {
+                start: start.start,
+                end,
+            }
+        }
+    }
+
     fn parse_read_table(&mut self) -> Statement {
         let start = self.consume();
         self.expect_keyword("TABLE", "Expected TABLE after READ.");
@@ -1465,22 +1813,36 @@ impl Parser {
         let mut key = BTreeMap::new();
 
         while !self.at(TokenKind::EOF) && !self.at(TokenKind::Dot) {
-            if self.match_keyword("INTO") {
-                self.match_kind(TokenKind::At);
-                if self.match_keyword("DATA") {
-                    self.match_kind(TokenKind::LParen);
-                    let n = self.expect_identifier("Expected inline variable.");
-                    self.match_kind(TokenKind::RParen);
-                    target = n.map(|t| t.lexeme);
-                    inline = true;
+            if self.match_keyword("INTO") || self.match_keyword("ASSIGNING") {
+                if self.match_keyword("FIELD-SYMBOL") || self.match_keyword("FIELD-SYMBOLS") {
+                    if self.at(TokenKind::LParen) {
+                        self.consume();
+                        let n = self.expect_identifier("Expected inline field-symbol name.");
+                        self.expect(TokenKind::RParen, "Expected ).");
+                        target = n.map(|t| t.lexeme);
+                        inline = true;
+                    } else {
+                        let n = self.expect_identifier("Expected inline field-symbol name.");
+                        target = n.map(|t| t.lexeme);
+                        inline = true;
+                    }
                 } else {
-                    target = self.expect_identifier("Expected target variable.").map(|t| t.lexeme);
+                    self.match_kind(TokenKind::At);
+                    if self.match_keyword("DATA") {
+                        self.match_kind(TokenKind::LParen);
+                        let n = self.expect_identifier("Expected inline variable.");
+                        self.match_kind(TokenKind::RParen);
+                        target = n.map(|t| t.lexeme);
+                        inline = true;
+                    } else {
+                        target = self.expect_identifier("Expected target variable.").map(|t| t.lexeme);
+                    }
                 }
             } else if self.match_keyword("INDEX") {
                 index = Some(self.parse_expression(0));
             } else if self.match_keyword("WITH") {
                 self.match_keyword("KEY");
-                while !self.at(TokenKind::Dot) && !self.is_keyword("INDEX") && !self.is_keyword("INTO") {
+                while !self.at(TokenKind::Dot) && !self.is_keyword("INDEX") && !self.is_keyword("INTO") && !self.is_keyword("ASSIGNING") {
                     let k = self.expect_identifier("Expected key field.");
                     self.expect_operator("=", "Expected = in key.");
                     let v = self.parse_expression(0);
@@ -1489,7 +1851,10 @@ impl Parser {
                     }
                     if self.at(TokenKind::Comma) {
                         self.consume();
-                    } else if !self.at(TokenKind::Dot) {
+                    } else if !self.at(TokenKind::Dot) && !self.is_keyword("INDEX") && !self.is_keyword("INTO") && !self.is_keyword("ASSIGNING") {
+                        if self.peek(1).lexeme == "=" {
+                            continue;
+                        }
                         break;
                     }
                 }
@@ -1506,6 +1871,11 @@ impl Parser {
             index,
             key: if !key.is_empty() { Some(key) } else { None },
             inline: Some(inline),
+            comparing: None,
+            transporting: None,
+            binary_search: None,
+            casting: None,
+            reference_into: None,
         }
     }
 
@@ -1642,21 +2012,19 @@ impl Parser {
     }
 
     fn parse_write(&mut self) -> Statement {
-        let s = self.consume();
+        let start = self.consume().start;
         self.match_kind(TokenKind::Colon);
         let mut groups: Vec<Vec<Expr>> = vec![Vec::new()];
         let mut values = Vec::new();
         let mut newline = false;
 
         self.in_write = true;
-
         while !self.at(TokenKind::Dot) && !self.at(TokenKind::EOF) {
             if self.at(TokenKind::Comma) {
                 self.consume();
                 continue;
             }
-
-            if (self.current().kind == TokenKind::Operator && self.current().lexeme == "/") || self.current().lexeme == "/" {
+            if self.current().lexeme == "/" {
                 newline = true;
                 self.consume();
                 if let Some(last) = groups.last() {
@@ -1664,34 +2032,34 @@ impl Parser {
                         groups.push(Vec::new());
                     }
                 }
-                if self.at(TokenKind::Dot) || self.at(TokenKind::EOF) {
+                // If we hit a dot right after a slash or comma, break cleanly
+                if self.at(TokenKind::Dot) {
                     break;
                 }
                 continue;
             }
-
-            if self.at(TokenKind::Dot) || self.at(TokenKind::EOF) {
+            // If we hit a dot right after a slash or comma, break cleanly
+            if self.at(TokenKind::Dot) {
                 break;
             }
-
-            let value = self.parse_expression(0);
-            values.push(value.clone());
+            let val = self.parse_expression(0);
+            values.push(val.clone());
             if let Some(last) = groups.last_mut() {
-                last.push(value);
-            }
-
-            if self.at(TokenKind::Comma) {
-                self.consume();
+                last.push(val);
             }
         }
-
         self.in_write = false;
 
-        let e = self.expect_dot("Expected \".\" after WRITE.");
+        let end = self.current().end;
+        self.expect_dot("Expected '.' after WRITE");
         groups.retain(|g| !g.is_empty());
+        if groups.is_empty() && !values.is_empty() {
+            groups.push(values.clone());
+        }
+
         Statement::WriteStmt {
-            start: s.start,
-            end: e.map(|tok| tok.end).unwrap_or(s.end),
+            start,
+            end,
             values,
             groups,
             newline,
@@ -1898,7 +2266,7 @@ impl Parser {
     fn parse_call_function(&mut self) -> Statement {
         let s = self.consume();
         self.expect_keyword("FUNCTION", "Expected FUNCTION after CALL.");
-        let name = if self.current().kind == TokenKind::String {
+        let name = if self.current().kind == TokenKind::StringLiteral || self.current().kind == TokenKind::StringObject || self.current().kind == TokenKind::String {
             self.consume().lexeme
         } else {
             self.expect_identifier("Expected function name.")
@@ -2037,6 +2405,13 @@ impl Parser {
             target,
             single,
             where_clause,
+            for_update: None,
+            up_to_rows: None,
+            package_size: None,
+            bypassing_buffer: None,
+            for_all_entries_in: None,
+            group_by: None,
+            having: None,
         }
     }
 
@@ -2054,10 +2429,27 @@ impl Parser {
                 .expect_identifier("Expected exception type.")
                 .map(|t| t.lexeme)
                 .unwrap_or_else(|| "CX_ROOT".to_string());
+            let mut variable = None;
+            if self.match_keyword("INTO") {
+                if self.match_keyword("DATA") {
+                    self.match_kind(TokenKind::LParen);
+                    let n = self.expect_identifier("Expected inline exception variable.");
+                    self.match_kind(TokenKind::RParen);
+                    variable = n.map(|t| t.lexeme);
+                } else if self.at(TokenKind::LParen) {
+                    self.consume();
+                    let n = self.expect_identifier("Expected inline exception variable.");
+                    self.match_kind(TokenKind::RParen);
+                    variable = n.map(|t| t.lexeme);
+                } else {
+                    variable = self.expect_identifier("Expected exception variable.").map(|t| t.lexeme);
+                }
+            }
+            self.expect_dot("Expected \".\" after CATCH.");
             let cb = self.parse_block(&end_set);
             catches.push(TryCatch {
                 catch_type,
-                variable: None,
+                variable,
                 body: cb,
             });
         }
@@ -2166,7 +2558,9 @@ impl Parser {
                     let mut value = None;
                     while !self.at(TokenKind::EOF) && !self.at(TokenKind::Comma) && !self.at(TokenKind::Dot) {
                         if self.match_keyword("VALUE") {
-                            self.expect_operator("=", "Expected = after VALUE.");
+                            if self.at(TokenKind::Operator) && self.current().lexeme == "=" {
+                                self.consume();
+                            }
                             value = Some(self.parse_expression(0));
                             continue;
                         }
@@ -2356,6 +2750,113 @@ impl Parser {
         c
     }
 
+    fn parse_interface(&mut self) -> Statement {
+        let start = self.consume().start; // INTERFACE
+        let name = self
+            .expect_identifier("Expected interface name.")
+            .map(|t| t.lexeme)
+            .unwrap_or_else(|| "UNKNOWN".to_string());
+        self.expect_dot("Expected \".\" after interface name.");
+
+        let mut methods = Vec::new();
+        while !self.at(TokenKind::EOF) && !self.is_keyword("ENDINTERFACE") {
+            if self.is_keyword("METHODS") || self.is_keyword("CLASS-METHODS") {
+                let kw = self.consume();
+                let is_static = kw.upper == "CLASS-METHODS";
+                self.match_kind(TokenKind::Colon);
+                while !self.at(TokenKind::Dot) && !self.at(TokenKind::EOF) {
+                    if let Some(m_info) = self.parse_method_name() {
+                        let (params, returning) = self.parse_method_signature();
+                        let importing = params.iter().filter(|p| p.direction == "importing").cloned().collect();
+                        let exporting = params.iter().filter(|p| p.direction == "exporting").cloned().collect();
+                        let changing = params.iter().filter(|p| p.direction == "changing").cloned().collect();
+                        methods.push(MethodDef {
+                            start: m_info.start,
+                            end: m_info.end,
+                            name: m_info.name,
+                            is_static,
+                            importing,
+                            exporting,
+                            changing,
+                            returning,
+                        });
+                    }
+                    if self.at(TokenKind::Comma) {
+                        self.consume();
+                    } else {
+                        break;
+                    }
+                }
+                self.match_kind(TokenKind::Dot);
+                continue;
+            }
+            if self.at(TokenKind::Dot) {
+                self.consume();
+                continue;
+            }
+            self.consume();
+        }
+
+        self.expect_keyword("ENDINTERFACE", "Expected ENDINTERFACE.");
+        let end = self
+            .expect_dot("Expected \".\" after ENDINTERFACE.")
+            .map(|t| t.end)
+            .unwrap_or(self.previous().end);
+
+        let idef = InterfaceDef {
+            start,
+            end,
+            name,
+            methods,
+        };
+        self.interfaces.push(idef.clone());
+        Statement::InterfaceDecl(idef)
+    }
+
+    fn parse_create_object(&mut self) -> Statement {
+        let start = self.consume().start; // CREATE
+        self.expect_keyword("OBJECT", "Expected OBJECT after CREATE.");
+        let target = self
+            .expect_identifier("Expected target variable in CREATE OBJECT.")
+            .map(|t| t.lexeme)
+            .unwrap_or_else(|| "UNKNOWN".to_string());
+
+        let mut class_name = None;
+        if self.match_keyword("TYPE") {
+            class_name = self
+                .expect_identifier("Expected class name after TYPE in CREATE OBJECT.")
+                .map(|t| t.lexeme);
+        }
+
+        let mut exporting = HashMap::new();
+        if self.match_keyword("EXPORTING") {
+            while !self.at(TokenKind::Dot) && !self.at(TokenKind::EOF) {
+                if let Some(param_tok) = self.expect_identifier("Expected parameter name in EXPORTING.") {
+                    if self.at(TokenKind::Operator) && self.current().lexeme == "=" {
+                        self.consume();
+                    }
+                    let expr = self.parse_expression(0);
+                    exporting.insert(param_tok.lexeme.to_ascii_uppercase(), expr);
+                } else {
+                    break;
+                }
+            }
+        }
+
+        let end = self
+            .expect_dot("Expected \".\" after CREATE OBJECT.")
+            .map(|t| t.end)
+            .unwrap_or(self.previous().end);
+
+        Statement::CreateObject(CreateObject {
+            start,
+            end,
+            target,
+            class_name,
+            exporting,
+        })
+    }
+
     fn parse_method_signature(&mut self) -> (Vec<MethodParameter>, Option<ReturningParam>) {
         let mut params = Vec::new();
         let mut returning = None;
@@ -2489,22 +2990,32 @@ impl Parser {
         })
     }
 
-    fn parse_method_call(&mut self) -> Statement {
+    fn parse_method_call_statement(&mut self) -> Statement {
         let start = self.current().start;
         let receiver = self.consume().lexeme;
-        let selector = self.current().lexeme.clone();
-        self.expect(TokenKind::Arrow, "Expected -> or => for method call.");
-        let method = self
-            .parse_method_name()
-            .map(|m| m.name)
-            .unwrap_or_else(|| "UNKNOWN".to_string());
+        let (method, is_static) = if self.at(TokenKind::Tilde) {
+            self.consume();
+            let m = self
+                .parse_method_name()
+                .map(|m| m.name)
+                .unwrap_or_else(|| "UNKNOWN".to_string());
+            (format!("{}~{}", receiver, m), false)
+        } else {
+            let selector = self.current().lexeme.clone();
+            self.expect(TokenKind::Arrow, "Expected -> or => for method call.");
+            let m = self
+                .parse_method_name()
+                .map(|m| m.name)
+                .unwrap_or_else(|| "UNKNOWN".to_string());
+            (m, selector == "=>")
+        };
         let actuals = self.parse_method_actual_arguments();
         let end = self.expect_dot("Expected \".\" after method call.");
 
-        Statement::MethodCallStmt {
+        Statement::MethodCall {
             start,
             end: end.map(|tok| tok.end).unwrap_or(self.previous().end),
-            receiver,
+            receiver: receiver.clone(),
             method,
             args: actuals.args,
             named: actuals.named,
@@ -2518,7 +3029,29 @@ impl Parser {
             } else {
                 None
             },
-            static_call: Some(selector == "=>"),
+            static_call: Some(is_static),
+        }
+    }
+
+    fn parse_raise(&mut self) -> Statement {
+        let start = self.consume().start;
+        if self.is_keyword("SHORTDUMP") {
+            self.consume();
+        } else if self.is_keyword("EXCEPTION") {
+            self.consume();
+        }
+        if self.is_keyword("TYPE") {
+            self.consume();
+        }
+        let exception_type = self
+            .expect_identifier("Expected exception type after RAISE EXCEPTION TYPE.")
+            .map(|t| t.lexeme)
+            .unwrap_or_else(|| "CX_ROOT".to_string());
+        let end = self.expect_dot("Expected \".\" after RAISE statement.");
+        Statement::RaiseStmt {
+            start,
+            end: end.map(|t| t.end).unwrap_or(self.previous().end),
+            exception_type,
         }
     }
 
@@ -2659,7 +3192,9 @@ impl Parser {
             return self.parse_string_template(&tok);
         }
         let t = self.current().clone();
-        if t.upper == "NOT" || t.lexeme == "-" {
+        if (t.kind == TokenKind::Keyword && t.upper == "NOT")
+            || (t.kind == TokenKind::Operator && t.lexeme == "-")
+        {
             self.consume();
             let operand = self.parse_expression(6);
             let op_end = operand.end_pos();
@@ -2706,9 +3241,9 @@ impl Parser {
             if self.current().kind == TokenKind::Arrow {
                 let selector = self.current().lexeme.clone();
                 self.consume();
-                let f = self.expect_identifier("Expected component or method name after ->/=>.");
-                let f_tok = match f {
-                    Some(tok) => tok,
+                let m = self.parse_method_name();
+                let m_info = match m {
+                    Some(info) => info,
                     None => break,
                 };
                 let b_start = base.start_pos();
@@ -2718,7 +3253,7 @@ impl Parser {
                         start: b_start,
                         end: self.previous().end,
                         receiver: Box::new(base),
-                        method: f_tok.lexeme,
+                        method: m_info.name,
                         args: actuals.args,
                         named: actuals.named,
                         output_named: if !actuals.output_named.is_empty() {
@@ -2736,11 +3271,73 @@ impl Parser {
                 } else {
                     base = Expr::Field {
                         start: b_start,
-                        end: f_tok.end,
+                        end: m_info.end,
                         base: Box::new(base),
-                        field: f_tok.lexeme,
+                        field: m_info.name,
                         static_selector: Some(selector == "=>"),
                     };
+                }
+                continue;
+            }
+            if self.at(TokenKind::Tilde) {
+                self.consume();
+                if let Some(second) = self.expect_identifier("Expected identifier after ~.") {
+                    let b_start = base.start_pos();
+                    match base {
+                        Expr::Field { start, base: sub_base, field, static_selector, .. } => {
+                            base = Expr::Field {
+                                start,
+                                end: second.end,
+                                base: sub_base,
+                                field: format!("{}~{}", field, second.lexeme),
+                                static_selector,
+                            };
+                        }
+                        Expr::Variable { start, name, .. } => {
+                            base = Expr::Variable {
+                                start,
+                                end: second.end,
+                                name: format!("{}~{}", name, second.lexeme),
+                            };
+                        }
+                        other => {
+                            base = Expr::Field {
+                                start: b_start,
+                                end: second.end,
+                                base: Box::new(other),
+                                field: second.lexeme,
+                                static_selector: None,
+                            };
+                        }
+                    }
+                    if self.at(TokenKind::LParen) {
+                        let actuals = self.parse_method_actual_arguments();
+                        let (receiver, method, static_call) = match base {
+                            Expr::Field { base: r, field: m, static_selector, .. } => {
+                                (r, m, static_selector)
+                            }
+                            _ => (Box::new(base.clone()), "UNKNOWN".to_string(), None),
+                        };
+                        base = Expr::MethodCallExpr {
+                            start: b_start,
+                            end: self.previous().end,
+                            receiver,
+                            method,
+                            args: actuals.args,
+                            named: actuals.named,
+                            output_named: if !actuals.output_named.is_empty() {
+                                Some(actuals.output_named)
+                            } else {
+                                None
+                            },
+                            changing_named: if !actuals.changing_named.is_empty() {
+                                Some(actuals.changing_named)
+                            } else {
+                                None
+                            },
+                            static_call,
+                        };
+                    }
                 }
                 continue;
             }
@@ -2832,6 +3429,62 @@ impl Parser {
         }
     }
 
+    fn parse_value_constructor(&mut self) -> Expr {
+        let s = self.consume();
+        let mut type_name = None;
+        if self.at(TokenKind::Hash) {
+            self.consume();
+            type_name = Some("#".to_string());
+        } else if (self.at(TokenKind::Identifier) || self.at(TokenKind::Keyword))
+            && self.peek(1).kind == TokenKind::LParen
+        {
+            type_name = Some(self.consume().lexeme);
+        }
+        self.expect(TokenKind::LParen, "Expected ( after VALUE constructor.");
+        let components = self.parse_value_components();
+        let e = self.expect(TokenKind::RParen, "Expected ) after VALUE constructor.");
+        Expr::ValueConstructor {
+            start: s.start,
+            end: e.map(|tok| tok.end).unwrap_or(self.previous().end),
+            type_name,
+            components,
+        }
+    }
+
+    fn parse_value_components(&mut self) -> Vec<ValueComponent> {
+        let mut components = Vec::new();
+        while !self.at(TokenKind::EOF) && !self.at(TokenKind::RParen) {
+            if self.at(TokenKind::Comma) {
+                self.consume();
+                continue;
+            }
+            if self.at(TokenKind::LParen) {
+                self.consume();
+                let row_comps = self.parse_value_components();
+                self.expect(TokenKind::RParen, "Expected ) after table row in VALUE constructor.");
+                components.push(ValueComponent::Row(row_comps));
+            } else if (self.at(TokenKind::Identifier) || self.at(TokenKind::Keyword))
+                && self.peek(1).kind == TokenKind::Operator
+                && self.peek(1).lexeme == "="
+            {
+                let name = self.consume().lexeme;
+                self.consume();
+                let value = self.parse_expression(0);
+                components.push(ValueComponent::Field {
+                    name,
+                    value: Box::new(value),
+                });
+            } else {
+                let value = self.parse_expression(0);
+                components.push(ValueComponent::Expression(Box::new(value)));
+            }
+            if self.at(TokenKind::Comma) {
+                self.consume();
+            }
+        }
+        components
+    }
+
     fn parse_primary(&mut self) -> Expr {
         let t = self.current().clone();
         if t.kind == TokenKind::Integer {
@@ -2855,7 +3508,7 @@ impl Parser {
                 type_ref: TypeRef::scalar("decfloat34"),
             };
         }
-        if t.kind == TokenKind::String {
+        if t.kind == TokenKind::StringLiteral || t.kind == TokenKind::StringObject || t.kind == TokenKind::String {
             self.consume();
             return Expr::Literal {
                 start: t.start,
@@ -2920,35 +3573,13 @@ impl Parser {
             self.expect(TokenKind::RParen, "Expected )");
             return e;
         }
-        if t.upper == "VALUE" {
-            let s = self.consume();
-            if self.at(TokenKind::Hash) {
-                self.consume();
-            }
-            self.match_kind(TokenKind::LParen);
-            let mut assignments = Vec::new();
-            while !self.at(TokenKind::EOF) && !self.at(TokenKind::RParen) {
-                let n = self.expect_identifier("Expected component in VALUE #(...).");
-                let n_tok = match n {
-                    Some(tok) => tok,
-                    None => break,
-                };
-                self.expect_operator("=", "Expected = in VALUE constructor.");
-                let v = self.parse_expression(4);
-                assignments.push(ConstructorAssignment {
-                    name: n_tok.lexeme,
-                    value: v,
-                });
-                if self.at(TokenKind::Comma) {
-                    self.consume();
-                }
-            }
-            let e = self.expect(TokenKind::RParen, "Expected ) after VALUE constructor.");
-            return Expr::Constructor {
-                start: s.start,
-                end: e.map(|tok| tok.end).unwrap_or(s.end),
-                assignments,
-            };
+        if t.upper == "VALUE" && (
+            self.peek(1).kind == TokenKind::Hash
+            || self.peek(1).kind == TokenKind::LParen
+            || ((self.peek(1).kind == TokenKind::Identifier || self.peek(1).kind == TokenKind::Keyword)
+                && self.peek(2).kind == TokenKind::LParen)
+        ) {
+            return self.parse_value_constructor();
         }
         if t.upper == "SWITCH" {
             return self.parse_switch_expression();
@@ -2982,6 +3613,24 @@ impl Parser {
                     name: name.lexeme,
                     args,
                 };
+            }
+            if name.lexeme.contains('-') && !name.lexeme.to_ascii_uppercase().starts_with("SY-") {
+                let segments: Vec<&str> = name.lexeme.split('-').collect();
+                let mut current_expr = Expr::Variable {
+                    start: name.start,
+                    end: name.end,
+                    name: segments[0].to_string(),
+                };
+                for seg in &segments[1..] {
+                    current_expr = Expr::Field {
+                        start: name.start,
+                        end: name.end,
+                        base: Box::new(current_expr),
+                        field: seg.to_string(),
+                        static_selector: None,
+                    };
+                }
+                return current_expr;
             }
             return Expr::Variable {
                 start: name.start,
@@ -3046,11 +3695,27 @@ impl Parser {
                 let trimmed = expr_str.trim();
                 if !trimmed.is_empty() {
                     let (tokens, diags) = Lexer::new(trimmed).tokenize();
-                    self.diagnostics.extend(diags);
-                    let mut sub_parser = Parser::new(tokens);
-                    let expr = sub_parser.parse_expression(0);
-                    self.diagnostics.extend(sub_parser.diagnostics);
-                    parts.push(expr);
+                    if !diags.has_errors() {
+                        let mut sub_parser = Parser::new(tokens);
+                        let expr = sub_parser.parse_expression(0);
+                        if !sub_parser.diagnostics.has_errors() {
+                            parts.push(expr);
+                        } else {
+                            parts.push(Expr::Literal {
+                                start: token.start,
+                                end: token.end,
+                                value: serde_json::Value::String(trimmed.to_string()),
+                                type_ref: TypeRef::scalar("string"),
+                            });
+                        }
+                    } else {
+                        parts.push(Expr::Literal {
+                            start: token.start,
+                            end: token.end,
+                            value: serde_json::Value::String(trimmed.to_string()),
+                            type_ref: TypeRef::scalar("string"),
+                        });
+                    }
                 }
             } else {
                 buffer.push(ch);
@@ -3266,6 +3931,7 @@ impl Expr {
             | Expr::Call { start, .. }
             | Expr::Index { start, .. }
             | Expr::Constructor { start, .. }
+            | Expr::ValueConstructor { start, .. }
             | Expr::NewObject { start, .. }
             | Expr::MethodCallExpr { start, .. }
             | Expr::Switch { start, .. } => *start,
@@ -3282,6 +3948,7 @@ impl Expr {
             | Expr::Call { end, .. }
             | Expr::Index { end, .. }
             | Expr::Constructor { end, .. }
+            | Expr::ValueConstructor { end, .. }
             | Expr::NewObject { end, .. }
             | Expr::MethodCallExpr { end, .. }
             | Expr::Switch { end, .. } => *end,
@@ -3296,6 +3963,7 @@ impl Statement {
             | Statement::InlineDataAssign { end, .. }
             | Statement::ConstantDecl { end, .. }
             | Statement::Assignment { end, .. }
+            | Statement::Assign { end, .. }
             | Statement::WriteStmt { end, .. }
             | Statement::IfStmt { end, .. }
             | Statement::WhileStmt { end, .. }
@@ -3319,6 +3987,8 @@ impl Statement {
             | Statement::AssertStmt { end, .. }
             | Statement::CallFunction { end, .. }
             | Statement::MethodCallStmt { end, .. }
+            | Statement::MethodCall { end, .. }
+            | Statement::RaiseStmt { end, .. }
             | Statement::EmlReadStmt { end, .. }
             | Statement::EmlModifyStmt { end, .. }
             | Statement::EmlTransactionStmt { end, .. }
@@ -3327,6 +3997,10 @@ impl Statement {
             | Statement::EmptyStmt { end, .. } => *end,
             Statement::ClassDecl(c) => c.end,
             Statement::TypeDecl(t) => t.end,
+            Statement::InterfaceDecl(i) => i.end,
+            Statement::ClassDefStmt(c) => c.end,
+            Statement::ClassImplStmt(c) => c.end,
+            Statement::CreateObject(c) => c.end,
         }
     }
 }

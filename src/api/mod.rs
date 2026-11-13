@@ -17,6 +17,7 @@ pub fn api_routes(state: AppState) -> Router {
         .route("/api/examples", get(examples_handler))
         .route("/api/example", get(example_handler))
         // Compilation and execution endpoints
+        .route("/api/run", post(run_handler))
         .route("/api/compile", post(compile_handler))
         .route("/api/execute", post(execute_handler))
         .route("/api/selection-preview", post(selection_preview_handler))

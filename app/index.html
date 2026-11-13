@@ -2,74 +2,85 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <meta name="theme-color" content="#0b1220" />
-  <title>ABAPC Studio</title>
-  <link rel="stylesheet" href="/style.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#d8e2ee" />
+  <title>SAP GUI Practice Simulator — ABAPC</title>
+  <link rel="stylesheet" href="/gui.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">A</div>
-      <div><div class="title">ABAPC Studio</div><div class="subtitle">Local ABAP + ABAP Cloud compiler</div></div>
-    </div>
-    <div class="toolbar">
-      <button id="backend-settings" class="secondary" title="Configure backend API URL (for Vercel or remote VPS)">⚙ API</button>
-      <a id="sapgui" class="secondary" href="/sapgui" style="text-decoration:none" title="Open SAP GUI-style transaction workbench">▦ Transaction GUI</a>
-      <select id="example" title="Open example"><option value="">Examples…</option></select>
-      <select id="mode" title="Compiler language version"><option value="standard">Standard ABAP</option><option value="cloud">ABAP Cloud</option></select>
-      <input id="filename" value="program.abap" aria-label="File name" />
-      <button id="build" class="secondary">Build</button>
-      <button id="run" class="primary">▶ Run</button>
-    </div>
+  <header class="window-titlebar">
+    <div class="abapc-appmark" aria-hidden="true">A</div>
+    <div class="window-title"><strong>SAP GUI Practice Simulator</strong><span>ABAPC local training system</span></div>
+    <div class="title-spacer"></div>
+    <span class="system-chip"><i></i> LOCAL · CLIENT 001</span>
+    <button class="window-link" id="open-editor" title="Open ABAP Editor (SE38)">SE38 Editor</button>
+    <a href="/sapgui" class="window-link" id="open-tx-gui" title="Transaction GUI (SAP GUI Practice)">Transaction GUI</a>
+    <button class="window-link" id="open-studio" title="Open the compiler IDE">ABAPC Studio ↗</button>
+    <div class="window-controls" aria-hidden="true"><span>—</span><span>□</span><span>×</span></div>
   </header>
-
-  <main class="workspace">
-    <aside class="sidebar left">
-      <div class="section-head"><span>Executed codes</span><button id="refresh" class="icon-btn" title="Refresh history">↻</button></div>
-      <div class="hint">Every Run is archived automatically.</div>
-      <div id="history" class="history"></div>
-    </aside>
-
-    <section class="editor-area">
-      <div class="editor-toolbar">
-        <span id="status" class="status-dot ready">Ready</span>
-        <span id="save-path" class="save-path"></span>
-        <span id="metrics" class="metrics">0 lines • 0 chars</span>
-      </div>
-      <div class="editor-wrap">
-        <div id="gutter" class="gutter">1</div>
-        <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" aria-label="ABAP source editor"></textarea>
-      </div>
-      <div class="shortcuts">
-        <span><kbd>Ctrl</kbd>/<kbd>⌘</kbd> <kbd>Enter</kbd> Run</span>
-        <span><kbd>F6</kbd> Build</span>
-        <span><kbd>Tab</kbd> indent</span>
-      </div>
-    </section>
-
-    <aside class="right-panel">
-      <div class="result-head">
-        <div class="tabs">
-          <button class="tab active" data-tab="output">Output</button>
-          <button class="tab" data-tab="diagnostics">Diagnostics</button>
-          <button class="tab" data-tab="variables">Variables</button>
-          <button class="tab" data-tab="ir">IR</button>
+  <nav class="classic-menubar" aria-label="SAP GUI style menu">
+    <button data-menu="Menu">Menu</button><button data-menu="Edit">Edit</button><button data-menu="Favorites">Favorites</button><button data-menu="Extras">Extras</button><button data-menu="Environment">Environment</button><button data-menu="System">System</button><button data-menu="Help">Help</button>
+    <span class="menubar-fill"></span><span class="menu-session">ABAPC · Offline Training</span>
+  </nav>
+  <section class="standard-toolbar" aria-label="Standard toolbar">
+    <button class="sap-tool enter-tool" id="go" title="Enter (Return)">✓</button>
+    <span class="toolbar-separator"></span>
+    <button class="sap-tool" id="back" title="Back (F3)">◀</button>
+    <button class="sap-tool" id="exit" title="Exit to Easy Access (Shift+F3)">↶</button>
+    <button class="sap-tool" id="cancel" title="Cancel (F12)">✕</button>
+    <span class="toolbar-separator"></span>
+    <button class="sap-tool" id="save" title="Save local editor draft (Ctrl+S)">▣</button>
+    <button class="sap-tool" id="refresh" title="Refresh current screen">⟳</button>
+    <button class="sap-tool" id="print" title="Print current screen">▤</button>
+    <span class="toolbar-separator"></span>
+    <label class="ok-code-label" for="command">Command</label>
+    <input id="command" autocomplete="off" spellcheck="false" placeholder="Transaction code (e.g. SE38)" aria-label="Command field" list="recent-command-list" /><datalist id="recent-command-list"></datalist>
+    <button class="recent-toggle" id="recent-toggle" title="Recent transactions">▾</button>
+    <span class="toolbar-hint">Enter</span>
+  </section>
+  <div class="offline-ribbon"><b>TRAINING SYSTEM</b><span>Local simulation — not connected to an SAP application server. Use fictional sample data only.</span></div>
+  <main class="gui-layout" id="gui-layout">
+    <aside class="sap-tree-pane" id="sap-tree-pane">
+      <div class="tree-top"><strong id="tree-title">SAP Easy Access</strong><button id="tree-collapse" title="Collapse / Expand SAP Easy Access">◀</button></div>
+      <div class="tree-collapsed-rail" id="tree-collapsed-rail" title="Click to expand SAP Easy Access" style="display:none;"><span class="tree-expand-icon">▶</span><span class="vertical-title">SAP EASY ACCESS</span></div>
+      <div class="tree-scroll" id="tree-scroll">
+        <button class="tree-node tree-home" data-tcode="S000"><span class="tree-expander">⌄</span><span class="tree-glyph">▣</span> SAP Easy Access (Local)</button>
+        <div class="tree-branch">
+          <button class="tree-node" data-tcode="ZCERT"><span class="tree-expander">›</span><span class="tree-glyph">▤</span> Certification Practice</button>
+          <button class="tree-node" data-tcode="SE38"><span class="tree-expander">›</span><span class="tree-glyph">▧</span> ABAP Editor <small>SE38</small></button>
+          <button class="tree-node" data-tcode="SE80"><span class="tree-expander">›</span><span class="tree-glyph">▣</span> Object Navigator <small>SE80</small></button>
+          <button class="tree-node" data-tcode="SE24"><span class="tree-expander">›</span><span class="tree-glyph">◇</span> Class Builder <small>SE24</small></button>
+          <button class="tree-node" data-tcode="SE37"><span class="tree-expander">›</span><span class="tree-glyph">ƒ</span> Function Builder <small>SE37</small></button>
+          <button class="tree-node" data-tcode="SE11"><span class="tree-expander">›</span><span class="tree-glyph">▤</span> Dictionary Explorer <small>SE11</small></button>
+          <button class="tree-node" data-tcode="SE16N"><span class="tree-expander">›</span><span class="tree-glyph">▦</span> Table Browser <small>SE16N</small></button>
+          <button class="tree-node" data-tcode="ZCDS"><span class="tree-expander">›</span><span class="tree-glyph">◫</span> CDS View Builder <small>ZCDS</small></button>
+          <button class="tree-node" data-tcode="ZRAP"><span class="tree-expander">›</span><span class="tree-glyph">⇄</span> RAP / EML Workbench <small>ZRAP</small></button>
+          <button class="tree-node" data-tcode="SE93"><span class="tree-expander">›</span><span class="tree-glyph">⌘</span> Transaction Codes <small>SE93</small></button>
+          <button class="tree-node" data-tcode="MM03"><span class="tree-expander">›</span><span class="tree-glyph">▤</span> Display Material <small>MM03*</small></button>
+          <button class="tree-node" data-tcode="VA03"><span class="tree-expander">›</span><span class="tree-glyph">▤</span> Display Sales Order <small>VA03*</small></button>
+          <button class="tree-node" data-tcode="ME23N"><span class="tree-expander">›</span><span class="tree-glyph">▤</span> Display Purchase Order <small>ME23N*</small></button>
+          <button class="tree-node" data-tcode="MMBE"><span class="tree-expander">›</span><span class="tree-glyph">▦</span> Stock Overview <small>MMBE*</small></button>
+          <button class="tree-node" data-tcode="SM37"><span class="tree-expander">›</span><span class="tree-glyph">◷</span> Execution Archive <small>SM37*</small></button>
+          <button class="tree-node" data-tcode="ST22"><span class="tree-expander">›</span><span class="tree-glyph">⚠</span> Runtime Diagnostics <small>ST22*</small></button>
+          <button class="tree-node" data-tcode="SAPLOGON"><span class="tree-expander">›</span><span class="tree-glyph">↗</span> Real SAP System</button>
         </div>
+        <div class="tree-divider"></div>
+        <div class="tree-caption">RECENT TRANSACTIONS</div>
+        <div id="recent-tree"><div class="tree-empty">Your recent transaction codes appear here.</div></div>
       </div>
-      <section id="output" class="result-body"></section>
-      <section id="diagnostics" class="result-body hidden"></section>
-      <section id="variables" class="result-body hidden"></section>
-      <section id="ir" class="result-body hidden"></section>
+      <div class="tree-footer">ABAPC TRAINING · OFFLINE</div>
     </aside>
+    <section class="sap-workspace">
+      <div class="work-titlebar">
+        <div class="title-meta"><div id="breadcrumbs" class="breadcrumbs">SAP Easy Access / Local Training</div><h1 id="screen-heading">SAP Easy Access</h1><p id="screen-subtitle">Choose a transaction or a certification practice exercise.</p></div>
+        <div class="title-actions"><span class="transaction-code" id="screen-code">S000</span><button class="small-action" id="help-screen" title="Screen help">?</button></div>
+      </div>
+      <div class="application-toolbar" id="application-toolbar"><span class="toolbar-label">Application</span><button data-app-command="execute">▶ Execute</button><button data-app-command="back">◀ Back</button><button data-app-command="help">Help</button></div>
+      <div id="screen" class="screen-content" aria-live="polite"></div>
+    </section>
   </main>
-
-  <footer>
-    <span>ABAPC Studio 5.0.1</span>
-    <span id="cloud-info">Cloud manifest: loading…</span>
-    <span>Local-only • 127.0.0.1</span>
-  </footer>
-
-  <script src="/app.js"></script>
+  <footer class="sap-statusbar"><div class="status-message"><span class="status-icon" id="status-icon">●</span><span id="status-message">Ready</span></div><span class="status-system">ABAPC <b>LOCAL</b></span><span class="status-client">001</span><span class="status-user">TRAINING</span><span class="status-position" id="clock">INS</span></footer>
+  <div id="sap-message-toast" class="sap-message-toast" role="status" aria-live="polite"></div>
+  <script src="/gui.js"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 use super::diagnostics::Position;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeBase {
@@ -75,9 +75,17 @@ pub struct Program {
     pub end: Position,
     #[serde(rename = "reportName", skip_serializing_if = "Option::is_none")]
     pub report_name: Option<String>,
+    #[serde(skip)]
+    pub report_span: Option<(Position, Position)>,
     pub statements: Vec<Statement>,
     pub types: Vec<TypeDecl>,
     pub classes: Vec<ClassDecl>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub interfaces: Vec<InterfaceDef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub class_defs: Vec<ClassDef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub class_impls: Vec<ClassImpl>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -167,6 +175,79 @@ pub struct ClassDecl {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MethodDef {
+    pub start: Position,
+    pub end: Position,
+    pub name: String,
+    #[serde(rename = "isStatic")]
+    pub is_static: bool,
+    pub importing: Vec<MethodParameter>,
+    pub exporting: Vec<MethodParameter>,
+    pub changing: Vec<MethodParameter>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub returning: Option<ReturningParam>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MethodImpl {
+    pub start: Position,
+    pub end: Position,
+    pub name: String,
+    pub statements: Vec<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InterfaceDef {
+    pub start: Position,
+    pub end: Position,
+    pub name: String,
+    pub methods: Vec<MethodDef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ClassSection {
+    pub types: Vec<TypeDecl>,
+    pub attributes: Vec<ClassAttributeDecl>,
+    pub methods: Vec<MethodDef>,
+    pub interfaces: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClassDef {
+    pub start: Position,
+    pub end: Position,
+    pub name: String,
+    #[serde(rename = "superClass", skip_serializing_if = "Option::is_none")]
+    pub super_class: Option<String>,
+    #[serde(rename = "isFinal")]
+    pub is_final: bool,
+    #[serde(rename = "isAbstract")]
+    pub is_abstract: bool,
+    pub interfaces: Vec<String>,
+    pub public_section: ClassSection,
+    pub protected_section: ClassSection,
+    pub private_section: ClassSection,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClassImpl {
+    pub start: Position,
+    pub end: Position,
+    pub name: String,
+    pub methods: Vec<MethodImpl>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreateObject {
+    pub start: Position,
+    pub end: Position,
+    pub target: String,
+    #[serde(rename = "className", skip_serializing_if = "Option::is_none")]
+    pub class_name: Option<String>,
+    pub exporting: HashMap<String, Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Statement {
     DataDecl {
@@ -222,6 +303,12 @@ pub enum Statement {
         target: Expr,
         value: Expr,
     },
+    Assign {
+        start: Position,
+        end: Position,
+        source: Expr,
+        target: String,
+    },
     WriteStmt {
         start: Position,
         end: Position,
@@ -265,12 +352,40 @@ pub enum Statement {
         #[serde(skip_serializing_if = "Option::is_none")]
         inline: Option<bool>,
         body: Vec<Statement>,
+        #[serde(rename = "groupBy", skip_serializing_if = "Option::is_none")]
+        group_by: Option<Box<Expr>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        step: Option<Box<Expr>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from: Option<Box<Expr>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        to: Option<Box<Expr>>,
+        #[serde(rename = "usingKey", skip_serializing_if = "Option::is_none")]
+        using_key: Option<Box<Expr>>,
+        #[serde(rename = "transportingNoFields", skip_serializing_if = "Option::is_none")]
+        transporting_no_fields: Option<bool>,
+        #[serde(rename = "whereCond", skip_serializing_if = "Option::is_none")]
+        where_cond: Option<Box<Expr>>,
     },
     AppendStmt {
         start: Position,
         end: Position,
         value: Expr,
         table: Expr,
+        #[serde(rename = "initialLine", skip_serializing_if = "Option::is_none")]
+        initial_line: Option<bool>,
+        #[serde(rename = "linesOf", skip_serializing_if = "Option::is_none")]
+        lines_of: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from: Option<Box<Expr>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        to: Option<Box<Expr>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        assigning: Option<Box<Expr>>,
+        #[serde(rename = "referenceInto", skip_serializing_if = "Option::is_none")]
+        reference_into: Option<Box<Expr>>,
+        #[serde(rename = "sortedBy", skip_serializing_if = "Option::is_none")]
+        sorted_by: Option<Box<Expr>>,
     },
     InsertStmt {
         start: Position,
@@ -290,6 +405,16 @@ pub enum Statement {
         key: Option<BTreeMap<String, Expr>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         inline: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        comparing: Option<Box<Expr>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        transporting: Option<Box<Expr>>,
+        #[serde(rename = "binarySearch", skip_serializing_if = "Option::is_none")]
+        binary_search: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        casting: Option<bool>,
+        #[serde(rename = "referenceInto", skip_serializing_if = "Option::is_none")]
+        reference_into: Option<Box<Expr>>,
     },
     DeleteTableStmt {
         start: Position,
@@ -398,6 +523,26 @@ pub enum Statement {
         #[serde(rename = "staticCall", skip_serializing_if = "Option::is_none")]
         static_call: Option<bool>,
     },
+    MethodCall {
+        start: Position,
+        end: Position,
+        receiver: String,
+        method: String,
+        args: Vec<Expr>,
+        named: BTreeMap<String, Expr>,
+        #[serde(rename = "outputNamed", skip_serializing_if = "Option::is_none")]
+        output_named: Option<BTreeMap<String, Expr>>,
+        #[serde(rename = "changingNamed", skip_serializing_if = "Option::is_none")]
+        changing_named: Option<BTreeMap<String, Expr>>,
+        #[serde(rename = "staticCall", skip_serializing_if = "Option::is_none")]
+        static_call: Option<bool>,
+    },
+    RaiseStmt {
+        start: Position,
+        end: Position,
+        #[serde(rename = "exceptionType")]
+        exception_type: String,
+    },
     EmlReadStmt {
         start: Position,
         end: Position,
@@ -442,6 +587,20 @@ pub enum Statement {
         single: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         where_clause: Option<Expr>,
+        #[serde(rename = "forUpdate", skip_serializing_if = "Option::is_none")]
+        for_update: Option<bool>,
+        #[serde(rename = "upToRows", skip_serializing_if = "Option::is_none")]
+        up_to_rows: Option<Box<Expr>>,
+        #[serde(rename = "packageSize", skip_serializing_if = "Option::is_none")]
+        package_size: Option<Box<Expr>>,
+        #[serde(rename = "bypassingBuffer", skip_serializing_if = "Option::is_none")]
+        bypassing_buffer: Option<bool>,
+        #[serde(rename = "forAllEntriesIn", skip_serializing_if = "Option::is_none")]
+        for_all_entries_in: Option<Box<Expr>>,
+        #[serde(rename = "groupBy", skip_serializing_if = "Option::is_none")]
+        group_by: Option<Box<Expr>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        having: Option<Box<Expr>>,
     },
     TryStmt {
         start: Position,
@@ -455,6 +614,10 @@ pub enum Statement {
     },
     ClassDecl(ClassDecl),
     TypeDecl(TypeDecl),
+    InterfaceDecl(InterfaceDef),
+    ClassDefStmt(ClassDef),
+    ClassImplStmt(ClassImpl),
+    CreateObject(CreateObject),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -553,6 +716,13 @@ pub enum Expr {
         end: Position,
         assignments: Vec<ConstructorAssignment>,
     },
+    ValueConstructor {
+        start: Position,
+        end: Position,
+        #[serde(rename = "typeName", skip_serializing_if = "Option::is_none")]
+        type_name: Option<String>,
+        components: Vec<ValueComponent>,
+    },
     NewObject {
         start: Position,
         end: Position,
@@ -593,6 +763,16 @@ pub enum Expr {
 pub struct ConstructorAssignment {
     pub name: String,
     pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ValueComponent {
+    Field {
+        name: String,
+        value: Box<Expr>,
+    },
+    Row(Vec<ValueComponent>),
+    Expression(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

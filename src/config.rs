@@ -16,6 +16,8 @@ pub struct AppConfig {
     pub manifest_path: String,
     pub platform_state_path: String,
     pub version: String,
+    pub rate_limit_max: usize,
+    pub rate_limit_window_secs: u64,
 }
 
 fn resolve_path(rel: &str) -> String {
@@ -58,6 +60,18 @@ impl AppConfig {
             }
         });
 
+        let rate_limit_max = env::var("RATE_LIMIT_MAX_REQUESTS")
+            .or_else(|_| env::var("ABAPC_RATE_LIMIT_MAX"))
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(60);
+
+        let rate_limit_window_secs = env::var("RATE_LIMIT_WINDOW_SECS")
+            .or_else(|_| env::var("ABAPC_RATE_LIMIT_WINDOW_SECS"))
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(60);
+
         Self {
             host,
             port,
@@ -72,6 +86,8 @@ impl AppConfig {
             manifest_path: resolve_path("runtime/released-apis.json"),
             platform_state_path: resolve_path("runtime/local-platform-state.json"),
             version: "5.0.1".to_string(),
+            rate_limit_max,
+            rate_limit_window_secs,
         }
     }
 }

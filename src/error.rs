@@ -11,6 +11,8 @@ pub enum AppError {
     NotFound(String),
     Forbidden(String),
     Internal(String),
+    TooManyRequests { message: String, retry_after: u64 },
+    Timeout(String),
 }
 
 impl std::fmt::Display for AppError {
@@ -20,6 +22,10 @@ impl std::fmt::Display for AppError {
             AppError::NotFound(msg) => write!(f, "Not Found: {}", msg),
             AppError::Forbidden(msg) => write!(f, "Forbidden: {}", msg),
             AppError::Internal(msg) => write!(f, "Internal Error: {}", msg),
+            AppError::TooManyRequests { message, retry_after } => {
+                write!(f, "Too Many Requests (retry after {}s): {}", retry_after, message)
+            }
+            AppError::Timeout(msg) => write!(f, "Timeout: {}", msg),
         }
     }
 }
@@ -28,18 +34,30 @@ impl std::error::Error for AppError {}
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, msg) = match self {
-            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
-            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-        };
-
-        let body = Json(json!({
-            "error": msg
-        }));
-
-        (status, body).into_response()
+        match self {
+            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response(),
+            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, Json(json!({ "error": msg }))).into_response(),
+            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, Json(json!({ "error": msg }))).into_response(),
+            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": msg }))).into_response(),
+            AppError::TooManyRequests { message, retry_after } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, retry_after.to_string())],
+                Json(json!({
+                    "error": "Too Many Requests",
+                    "message": message,
+                    "retry_after": retry_after
+                })),
+            )
+                .into_response(),
+            AppError::Timeout(msg) => (
+                StatusCode::REQUEST_TIMEOUT,
+                Json(json!({
+                    "error": "Execution Timeout",
+                    "message": msg
+                })),
+            )
+                .into_response(),
+        }
     }
 }
 

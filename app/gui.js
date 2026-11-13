@@ -1,11 +1,243 @@
 const $ = id => document.getElementById(id);
 function readSessionArray(key) { try { const value = JSON.parse(sessionStorage.getItem(key) || 'null'); return Array.isArray(value) ? value : []; } catch { return []; } }
 function readRecentTx() { try { const value = JSON.parse(localStorage.getItem('abapc-recent-tx') || '[]'); return Array.isArray(value) ? value.filter(x => typeof x === 'string') : []; } catch { return []; } }
+
+// Shared Virtual File System (VFS) Helpers & Starters
+const DEFAULT_VFS_FILES = {
+  // --- Standard ABAP Reports ---
+  "z_stateless_main.abap": `REPORT z_stateless_main.
+
+" =====================================================================
+" 1. STATELESS EXECUTION & EPHEMERAL VM PLAYGROUND
+" CodePen-style architecture with Bring Your Own Database (BYODB)
+" =====================================================================
+
+DATA: lv_developer TYPE string VALUE 'Full-Stack Rust/ABAP Engineer',
+      lv_count     TYPE i VALUE 0.
+
+WRITE: / '-------------------------------------------------------',
+       / '  ABAPC STUDIO 5.0.1 - STATELESS COMPILER ENGINE',
+       / '-------------------------------------------------------'.
+
+WRITE: / 'Active Mode: Standard ABAP',
+       / 'Role:', lv_developer.
+
+DO 5 TIMES.
+  lv_count = lv_count + 1.
+  WRITE: / |  [*] Step { lv_count }: VM execution step verified.|.
+ENDDO.
+
+WRITE: / '-------------------------------------------------------',
+       / 'Security Guarantee: Zero disk retention on server.',
+       / 'RAII AutoCleanFile drop-guard wiped temp files in 0ms.'.
+`,
+
+  "z_oo_math.abap": `REPORT z_oo_math.
+
+" =====================================================================
+" 2. OBJECT-ORIENTED ABAP & RESILIENT EXCEPTION HANDLING
+" Tests classes, method dispatch, and TRY/CATCH blocks
+" =====================================================================
+
+CLASS lcl_math DEFINITION.
+  PUBLIC SECTION.
+    CLASS-METHODS: divide IMPORTING iv_num1 TYPE i iv_num2 TYPE i
+                          RETURNING VALUE(rv_result) TYPE i.
+ENDCLASS.
+
+CLASS lcl_math IMPLEMENTATION.
+  METHOD divide.
+    TRY.
+        rv_result = iv_num1 / iv_num2.
+      CATCH cx_sy_zerodivide.
+        rv_result = -1. " Graceful fallback for division by zero
+    ENDTRY.
+  ENDMETHOD.
+ENDCLASS.
+
+DATA: lv_calc TYPE i.
+
+WRITE: / '--- Testing Valid Division ---'.
+lv_calc = lcl_math=>divide( iv_num1 = 100 iv_num2 = 5 ).
+WRITE: / '100 / 5 =', lv_calc.
+
+WRITE: / '--- Testing Zero Division (Caught Exception) ---'.
+lv_calc = lcl_math=>divide( iv_num1 = 77 iv_num2 = 0 ).
+WRITE: / '77 / 0 =', lv_calc, '(Fallback value -1 returned)'.
+`,
+
+  "z_byodb_sql.abap": `REPORT z_byodb_sql.
+
+" =====================================================================
+" 3. BRING YOUR OWN DATABASE (BYODB) - OPEN SQL
+" Connect Supabase or Neon in Database Settings, or use Local Mock!
+" =====================================================================
+
+TYPES: BEGIN OF ty_flight,
+         carrid TYPE string,
+         connid TYPE i,
+         price  TYPE i,
+       END OF ty_flight.
+
+DATA: lt_flights TYPE TABLE OF ty_flight,
+      ls_flight  TYPE ty_flight.
+
+WRITE: / 'Querying active database engine (BYODB or Local Mock)...'.
+
+SELECT carrid connid price
+  FROM sflight
+  WHERE price > 450
+  INTO TABLE @lt_flights.
+
+IF sy-subrc = 0.
+  WRITE: / |Found { sy-dbcnt } flights with price > 450:|.
+  LOOP AT lt_flights INTO ls_flight.
+    WRITE: / |[Flight] Carrier: { ls_flight-carrid } | &&
+             |ConnID: { ls_flight-connid } | &&
+             |Price: \${ ls_flight-price }|.
+  ENDLOOP.
+ELSE.
+  WRITE: / 'No matching flight records found.'.
+ENDIF.
+`,
+
+  // --- ABAP Cloud (if_oo_adt_classrun) ---
+  "zcl_cloud_classrun.abap": `CLASS zcl_cloud_classrun DEFINITION PUBLIC FINAL CREATE PUBLIC.
+  PUBLIC SECTION.
+    INTERFACES if_oo_adt_classrun.
+ENDCLASS.
+
+CLASS zcl_cloud_classrun IMPLEMENTATION.
+  METHOD if_oo_adt_classrun~main.
+    out->write( '-------------------------------------------------------' ).
+    out->write( '  ABAPC STUDIO 5.0.1 - ABAP CLOUD RUNTIME (ADT)' ).
+    out->write( '-------------------------------------------------------' ).
+    out->write( 'Environment: Modern ABAP Cloud OOP' ).
+    out->write( 'Interface: if_oo_adt_classrun' ).
+    
+    DATA lv_calc TYPE i.
+    lv_calc = 42 * 2.
+    out->write( |Calculation Result (42 * 2): { lv_calc }| ).
+    out->write( 'Execution completed successfully in cloud mode.' ).
+  ENDMETHOD.
+ENDCLASS.
+`,
+
+  "zcl_demo_cloud.abap": `CLASS zcl_demo_cloud DEFINITION PUBLIC FINAL CREATE PUBLIC.
+  PUBLIC SECTION.
+    INTERFACES if_oo_adt_classrun.
+ENDCLASS.
+
+CLASS zcl_demo_cloud IMPLEMENTATION.
+  METHOD if_oo_adt_classrun~main.
+    DATA: lv_tier TYPE string VALUE 'ENTERPRISE'.
+    DATA(lv_discount) = SWITCH #( lv_tier
+      WHEN 'BASIC'      THEN 5
+      WHEN 'PRO'        THEN 15
+      WHEN 'ENTERPRISE' THEN 30
+      ELSE 0 ).
+    out->write( |Customer Tier: { lv_tier }| ).
+    out->write( |Calculated Discount: { lv_discount } percent| ).
+  ENDMETHOD.
+ENDCLASS.
+`
+};
+
+function getFileCategory(name, content = '') {
+  const n = String(name || '').toLowerCase();
+  const c = String(content || '').toLowerCase();
+  if (n.startsWith('zcl_') || n.startsWith('zcx_') || n.includes('cloud') || c.includes('if_oo_adt_classrun') || (c.includes('class ') && c.includes('definition') && !c.includes('report '))) {
+    return 'cloud';
+  }
+  return 'report';
+}
+
+function getVFSFiles() {
+  try {
+    const raw = localStorage.getItem('abapc_vfs_files');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+        let updated = false;
+        if (!parsed['zcl_cloud_classrun.abap']) {
+          parsed['zcl_cloud_classrun.abap'] = DEFAULT_VFS_FILES['zcl_cloud_classrun.abap'];
+          updated = true;
+        }
+        if (!parsed['zcl_demo_cloud.abap']) {
+          parsed['zcl_demo_cloud.abap'] = DEFAULT_VFS_FILES['zcl_demo_cloud.abap'];
+          updated = true;
+        }
+        if (updated) saveVFSFiles(parsed);
+        return parsed;
+      }
+    }
+  } catch (e) {}
+  return { ...DEFAULT_VFS_FILES };
+}
+
+function saveVFSFiles(files) {
+  try {
+    localStorage.setItem('abapc_vfs_files', JSON.stringify(files));
+  } catch (e) {}
+}
+
+function getActiveVFSFileName() {
+  try {
+    const active = localStorage.getItem('abapc_active_file');
+    const vfs = getVFSFiles();
+    if (active && vfs[active]) return active;
+    return Object.keys(vfs)[0] || 'z_stateless_main.abap';
+  } catch (e) {
+    return 'z_stateless_main.abap';
+  }
+}
+
+function setActiveVFSFileName(name) {
+  try {
+    localStorage.setItem('abapc_active_file', name);
+  } catch (e) {}
+}
+
+function getByodbUrl() {
+  try {
+    return localStorage.getItem('abapc_byodb_url') || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function prettyPrintAbap(source) {
+  const keywords = [
+    'REPORT', 'CLASS', 'ENDCLASS', 'METHOD', 'ENDMETHOD', 'DEFINITION', 'IMPLEMENTATION',
+    'PUBLIC SECTION', 'PROTECTED SECTION', 'PRIVATE SECTION', 'INTERFACES', 'FINAL', 'CREATE PUBLIC',
+    'DATA', 'TYPES', 'BEGIN OF', 'END OF', 'CONSTANTS', 'FIELD-SYMBOLS',
+    'TYPE', 'VALUE', 'LIKE', 'TABLE OF', 'STANDARD TABLE OF',
+    'SELECT', 'SINGLE', 'FROM', 'WHERE', 'INTO TABLE', 'INTO', 'CORRESPONDING FIELDS OF', 'UP TO', 'ROWS',
+    'LOOP AT', 'ENDLOOP', 'ASSIGNING', 'TRANSPORTING', 'NO FIELDS',
+    'READ TABLE', 'WITH KEY', 'BINARY SEARCH', 'APPEND', 'TO', 'INITIAL LINE', 'LINES OF',
+    'IF', 'ELSE', 'ELSEIF', 'ENDIF', 'CASE', 'WHEN', 'ENDCASE', 'DO', 'ENDDO', 'WHILE', 'ENDWHILE',
+    'TRY', 'CATCH', 'ENDTRY', 'CLEANUP', 'RAISE EXCEPTION',
+    'CHECK', 'EXIT', 'CONTINUE', 'RETURN', 'CLEAR', 'FREE', 'REFRESH', 'ASSIGN',
+    'WRITE:', 'WRITE', 'ULINE', 'SKIP', 'NEW-LINE', 'FORMAT'
+  ];
+  const lines = source.split('\n');
+  return lines.map(line => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('"') || trimmed.startsWith('*')) return line;
+    let res = line;
+    for (const kw of keywords) {
+      const regex = new RegExp(`(?<=[^a-zA-Z0-9_#-]|^)${kw.replace('-', '\\-')}(?=[^a-zA-Z0-9_#-]|\$)`, 'gi');
+      res = res.replace(regex, kw);
+    }
+    return res;
+  }).join('\n');
+}
+
 const state = {
   current: 'S000', stack: [], recent: readRecentTx(), tables: {}, metadata: {}, examples: [], executions: [],
   lastDiagnostics: readSessionArray('abapc-last-diagnostics'),
   lastOutput: readSessionArray('abapc-last-output'),
-  editorPreset: 'cloud_classrun.abap', pendingSource: null, editorFilename: 'program.abap',
+  editorPreset: '', pendingSource: null, editorFilename: getActiveVFSFileName(),
 };
 const txInfo = {
   S000: ['ABAPC Easy Access', 'Local development and runtime tools'],
@@ -48,6 +280,11 @@ function goTo(tx, push=true) {
   $('screen-subtitle').textContent = txInfo[code][1];
   $('screen-code').textContent = code;
   document.querySelectorAll('.tree-node[data-tcode]').forEach(b => b.classList.toggle('selected', b.dataset.tcode === code));
+  const scr = $('screen');
+  if (scr) {
+    if (code === 'SE38') scr.classList.add('screen-editor-active');
+    else scr.classList.remove('screen-editor-active');
+  }
   renderCurrent();
   setStatus(`${code} ready · local simulator`);
 }
@@ -69,10 +306,8 @@ function notice(message, type='info') {
   const el = document.createElement('div'); el.id='transient-notice'; el.className=`notice ${type}`; el.innerHTML=message;
   $('screen').prepend(el);
 }
-const API_BASE = (window.API_BASE_URL || localStorage.getItem('ABAPC_API_BASE') || '').replace(/\/$/, '');
-const apiUrl = path => (path.startsWith('http') ? path : (API_BASE ? `${API_BASE}${path}` : path));
-async function jsonGet(url) { const r = await fetch(apiUrl(url)); const d = await r.json(); if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`); return d; }
-async function jsonPost(url, body) { const r = await fetch(apiUrl(url),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const d=await r.json(); if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`); return d; }
+async function jsonGet(url) { const r = await fetch(url); const d = await r.json(); if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`); return d; }
+async function jsonPost(url, body) { const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const d=await r.json(); if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`); return d; }
 function renderCurrent() {
   switch (state.current) {
     case 'S000': renderHome(); break;
@@ -116,173 +351,1298 @@ function renderHome() {
 }
 function bindOpenButtons() { document.querySelectorAll('[data-open]').forEach(b=>b.addEventListener('click',()=>goTo(b.dataset.open))); }
 async function loadExamples() { try { const d=await jsonGet('/api/examples'); state.examples=d.files||[]; return state.examples; } catch { return []; } }
-async function renderEditor(presetName=state.editorPreset || 'cloud_classrun.abap') {
-  const screen=$('screen'); screen.innerHTML='<div class="empty-state">Loading editor…</div>';
-  let source=state.pendingSource ?? `CLASS zcl_cloud_demo DEFINITION\n  PUBLIC\n  FINAL\n  CREATE PUBLIC.\n\n  PUBLIC SECTION.\n    INTERFACES if_oo_adt_classrun.\nENDCLASS.\n\nCLASS zcl_cloud_demo IMPLEMENTATION.\n  METHOD if_oo_adt_classrun~main.\n    DATA lv_total TYPE i.\n    lv_total = 10 + 20.\n    out->write( lv_total ).\n  ENDMETHOD.\nENDCLASS.`;
-  const pending = state.pendingSource !== null;
-  if (pending) state.pendingSource = null;
+async function renderEditor(presetName = state.editorPreset || '') {
+  const screen = $('screen');
+  screen.classList.add('screen-editor-active');
+  screen.innerHTML = '<div class="empty-state">Loading editor…</div>';
+
+  const vfs = getVFSFiles();
+  let currentFile = state.editorFilename || getActiveVFSFileName();
+  if (!vfs[currentFile]) {
+    currentFile = Object.keys(vfs)[0] || 'z_stateless_main.abap';
+  }
+  state.editorFilename = currentFile;
+  setActiveVFSFileName(currentFile);
+
+  let source = state.pendingSource !== null ? state.pendingSource : (vfs[currentFile] || '');
+  if (state.pendingSource !== null) state.pendingSource = null;
+
+  let currentCategory = getFileCategory(currentFile, source);
+  let vfsFilter = 'all'; // 'all' | 'cloud' | 'report'
+  let vfsSearch = '';
+  let autoSaveEnabled = localStorage.getItem('abapc_autosave_enabled') !== '0';
+  let activeOutputTab = 'output'; // 'output' | 'diagnostics' | 'variables' | 'ir'
+  let lastOutputLines = state.lastOutput || [];
+  let lastDiagnosticsList = state.lastDiagnostics || [];
+  let lastVariablesMap = {};
+  let lastIrData = null;
+
   let parameterSpecs = null;
   let parameterSource = null;
   let parameterMode = null;
   state.editorPreset = presetName || state.editorPreset;
-  let examples=state.examples.length?state.examples:await loadExamples();
-  try { if (!pending && presetName) { const d=await jsonGet('/api/example?name='+encodeURIComponent(presetName)); source=d.source; } } catch {}
-  screen.innerHTML=`
-    <div class="toolbar-row"><label for="gui-example">Example</label><select id="gui-example"><option value="">Choose example…</option>${examples.map(n=>`<option value="${esc(n)}" ${n===presetName?'selected':''}>${esc(n)}</option>`).join('')}</select><label for="gui-mode">Language</label><select id="gui-mode"><option value="standard">Standard ABAP</option><option value="cloud" selected>ABAP Cloud</option></select><label for="gui-filename">File</label><input id="gui-filename" value="${esc(state.editorFilename || 'program.abap')}" aria-label="File name"/><button class="secondary-btn" id="gui-build">Check</button><button class="secondary-btn" id="gui-restore-draft">Restore draft</button><button class="primary-btn" id="gui-run">▶ Execute</button></div>
-    <div id="gui-parameters"></div>
-    <textarea class="code-editor" id="gui-source" spellcheck="false" aria-label="ABAP code editor">${esc(source)}</textarea>
-    <div class="section-label">Execution output</div><div class="console" id="gui-output">Ready. Select Execute to run this source in the ABAPC local runtime.</div>
-    <div class="section-label">Diagnostics</div><div id="gui-diags"><div class="empty-state">No diagnostics yet.</div></div>
-    <p class="small-note">Every Execute request uses the ABAPC compiler/runtime and is archived under <span class="mono">executed codes/</span>. This is a local subset, not SAP application-server execution.</p>`;
-  const resetSelectionScreen=()=>{parameterSpecs=null;parameterSource=null;parameterMode=null;$('gui-parameters').innerHTML='';$('gui-run').textContent='▶ Execute';};
-  const rangeRowMarkup=(v,i,rowIndex,initialRow=null)=>{
-    const noIntervals=!!v.noIntervals;
-    const sign=String(initialRow?.SIGN??initialRow?.sign??'I').toUpperCase();
-    const option=String(initialRow?.OPTION??initialRow?.option??'EQ').toUpperCase();
-    const low=String(initialRow?.LOW??initialRow?.low??'');
-    const high=String(initialRow?.HIGH??initialRow?.high??'');
-    const opts=(noIntervals?['EQ','NE','GT','GE','LT','LE','CP','NP']:['EQ','NE','GT','GE','LT','LE','BT','NB','CP','NP']).map(o=>`<option value="${o}" ${o===option?'selected':''}>${o}</option>`).join('');
+
+  const defaultMode = currentCategory === 'cloud' ? 'cloud' : 'standard';
+
+  // Render 3-part layout container: VFS Pane (Middle) + Editor Stage (Right: Top Editor + Bottom Output)
+  screen.innerHTML = `
+    <div class="sap-editor-container" id="sap-editor-container">
+      <!-- Middle Column: (SEPARATE for CLOUD and REPORT) File System -->
+      <aside class="sap-vfs-pane" id="sap-vfs-pane">
+        <div class="vfs-header">
+          <strong><span>📁</span> Repository Files</strong>
+          <span style="display:flex;align-items:center;gap:6px;">
+            <span class="vfs-badge report" id="vfs-total-count">0 files</span>
+            <button class="sap-pane-toggle-btn" id="btn-toggle-vfs-collapse" title="Collapse File System Pane">◀</button>
+          </span>
+        </div>
+        <div class="vfs-cat-tabs">
+          <button class="vfs-cat-btn active" data-vfs-filter="all" id="vfs-tab-all">All</button>
+          <button class="vfs-cat-btn" data-vfs-filter="cloud" id="vfs-tab-cloud">☁ Cloud</button>
+          <button class="vfs-cat-btn" data-vfs-filter="report" id="vfs-tab-report">📄 Report</button>
+        </div>
+        <div class="vfs-actions-bar">
+          <button id="vfs-btn-new-report" title="Create a new Standard ABAP Report (REPORT)">+ New Report</button>
+          <button id="vfs-btn-new-cloud" title="Create a new ABAP Cloud Class (if_oo_adt_classrun)">+ New Cloud</button>
+        </div>
+        <div class="vfs-search-box">
+          <input type="text" id="vfs-search-input" placeholder="Search programs (e.g. z_...)" spellcheck="false" />
+        </div>
+        <div class="vfs-file-scroll" id="vfs-file-list"></div>
+      </aside>
+
+      <!-- Collapsed rail for VFS when folded -->
+      <div class="vfs-collapsed-rail" id="vfs-collapsed-rail" title="Expand Virtual File System" style="display:none;">
+        <span class="rail-icon">▶</span>
+        <span class="vertical-title">VFS FILES</span>
+      </div>
+
+      <!-- Draggable Horizontal Splitter between VFS and Editor -->
+      <div class="sap-horizontal-resizer" id="sap-horizontal-resizer" title="Drag to adjust File System width"></div>
+
+      <!-- Right Stage: CODE EDITOR (top) & OUTPUT SCROLLABLE (bottom) -->
+      <main class="sap-editor-stage">
+        <!-- Top: CODE EDITOR -->
+        <section class="sap-editor-top" id="sap-editor-top">
+          <div class="sap-editor-toolbar">
+            <div class="editor-active-file-pill">
+              <span id="editor-active-icon">${currentCategory === 'cloud' ? '☁' : '📄'}</span>
+              <span id="editor-active-name">${esc(currentFile)}</span>
+              <span class="vfs-badge ${currentCategory}" id="editor-active-badge">${currentCategory.toUpperCase()}</span>
+            </div>
+            <span class="editor-status-pill saved" id="editor-save-status">✓ Saved</span>
+
+            <label for="gui-mode" style="font-size:10px;margin-left:4px;color:#456280;">Language</label>
+            <select id="gui-mode" style="height:23px;font-size:11px;padding:1px 4px;border:1px solid #9db0c4;background:#fff;">
+              <option value="standard" ${defaultMode === 'standard' ? 'selected' : ''}>Standard ABAP</option>
+              <option value="cloud" ${defaultMode === 'cloud' ? 'selected' : ''}>ABAP Cloud</option>
+            </select>
+
+            <button class="secondary-btn small-btn" id="btn-autosave-toggle" title="Toggle 1500ms debounced auto-save">${autoSaveEnabled ? 'Auto-Save: ON' : 'Auto-Save: OFF'}</button>
+            <button class="secondary-btn small-btn" id="gui-vfs-save" title="Save file to Virtual File System (Ctrl+S)">💾 Save</button>
+            <button class="secondary-btn small-btn" id="gui-build" title="Check syntax (Ctrl+F2)">⚙ Check</button>
+            <button class="secondary-btn small-btn" id="gui-pretty" title="Pretty Printer - uppercase keywords (Shift+F1)">✨ Pretty Printer</button>
+            <button class="secondary-btn small-btn" id="gui-byodb" title="Database Settings (BYODB PostgreSQL)">🗄 BYODB</button>
+
+            <span style="flex:1;"></span>
+
+            <button class="primary-btn small-btn" id="gui-run" style="font-weight:bold;padding:4px 12px;" title="Execute program in ephemeral VM (F8)">▶ Execute (F8)</button>
+          </div>
+
+          <div id="gui-parameters" style="overflow-y:auto;padding:4px 8px;background:#f8fafc;border-bottom:1px solid #c9d8e6;display:none;"></div>
+          <div class="sap-params-resizer" id="sap-params-resizer" title="Drag to adjust Selection Screen height" style="display:none;"></div>
+
+          <div class="editor-body-wrap">
+            <div class="code-gutter" id="gui-gutter"></div>
+            <textarea class="code-editor-input" id="gui-source" spellcheck="false" aria-label="ABAP Code Editor">${esc(source)}</textarea>
+          </div>
+        </section>
+
+        <!-- Draggable Vertical Splitter between Editor and Output -->
+        <div class="sap-vertical-resizer" id="sap-vertical-resizer" title="Drag to adjust Editor and Output Console height"></div>
+
+        <!-- Bottom: OUTPUT SCROLLABLE -->
+        <section class="sap-output-bottom" id="sap-output-bottom">
+          <div class="sap-output-header">
+            <span class="output-title"><span>▶</span> Output</span>
+            <span class="output-metric-pill info" id="output-status-pill">Ready</span>
+            <span id="output-meta-time" style="font-size:10px;color:#94a3b8;">Time: —</span>
+            <span id="output-meta-steps" style="font-size:10px;color:#94a3b8;">Steps: —</span>
+            <span id="output-meta-db" style="font-size:10px;color:#94a3b8;">DB: Ephemeral</span>
+
+            <span style="flex:1;"></span>
+
+            <button class="output-tab-btn active" data-output-tab="output">📋 Output List</button>
+            <button class="output-tab-btn" data-output-tab="diagnostics">⚠ Diagnostics (<span id="output-diag-count">0</span>)</button>
+            <button class="output-tab-btn" data-output-tab="variables">🔍 Variables</button>
+            <button class="output-tab-btn" data-output-tab="ir">⚡ IR Code</button>
+
+            <button class="secondary-btn small-btn" id="btn-copy-output" title="Copy output to clipboard" style="height:21px;padding:2px 6px;font-size:10px;">📋 Copy</button>
+            <button class="secondary-btn small-btn" id="btn-clear-output" title="Clear console output" style="height:21px;padding:2px 6px;font-size:10px;">✕ Clear</button>
+            <button class="sap-pane-toggle-btn" id="btn-toggle-output-collapse" title="Collapse / Expand Output Console">▼ Output</button>
+          </div>
+
+          <div class="output-scrollable-body" id="gui-output-body">
+            <div class="spool-line" style="color:#64748b;">Ready. Select Execute (F8) to run this program in the ephemeral ABAPC VM.</div>
+          </div>
+        </section>
+      </main>
+    </div>
+  `;
+
+  // Update Line Numbers Gutter
+  const updateGutter = () => {
+    const src = $('gui-source');
+    const gtr = $('gui-gutter');
+    if (!src || !gtr) return;
+    const lines = (src.value || '').split('\n').length;
+    gtr.innerHTML = Array.from({ length: lines }, (_, i) => i + 1).join('<br>');
+    gtr.scrollTop = src.scrollTop;
+  };
+
+  updateGutter();
+  $('gui-source').addEventListener('scroll', () => {
+    const gtr = $('gui-gutter');
+    if (gtr) gtr.scrollTop = $('gui-source').scrollTop;
+  });
+
+  // Render VFS File Explorer List (Separated into CLOUD and REPORT)
+  const renderVfsList = () => {
+    const curVfs = getVFSFiles();
+    const allKeys = Object.keys(curVfs).sort((a, b) => a.localeCompare(b));
+    const query = vfsSearch.trim().toLowerCase();
+
+    const cloudFiles = [];
+    const reportFiles = [];
+
+    for (const name of allKeys) {
+      if (query && !name.toLowerCase().includes(query)) continue;
+      const cat = getFileCategory(name, curVfs[name]);
+      if (cat === 'cloud') cloudFiles.push({ name, cat, code: curVfs[name] });
+      else reportFiles.push({ name, cat, code: curVfs[name] });
+    }
+
+    $('vfs-total-count').textContent = `${allKeys.length} files`;
+    $('vfs-tab-all').textContent = `All (${allKeys.length})`;
+    $('vfs-tab-cloud').textContent = `☁ Cloud (${cloudFiles.length})`;
+    $('vfs-tab-report').textContent = `📄 Report (${reportFiles.length})`;
+
+    const host = $('vfs-file-list');
+    let html = '';
+
+    // 1. Cloud Section
+    if (vfsFilter === 'all' || vfsFilter === 'cloud') {
+      html += `
+        <div class="vfs-section-title">
+          <span>☁ ABAP CLOUD OBJECTS</span>
+          <span style="font-weight:normal;opacity:0.8;">${cloudFiles.length}</span>
+        </div>
+      `;
+      if (!cloudFiles.length) {
+        html += `<div style="padding:6px 10px;font-size:10px;color:#8599ad;font-style:italic;">No cloud classes.</div>`;
+      } else {
+        html += cloudFiles.map(f => {
+          const lines = (f.code || '').split('\n').length;
+          const isActive = f.name === currentFile;
+          return `
+            <div class="vfs-file-item ${isActive ? 'active' : ''}" data-vfs-open="${esc(f.name)}">
+              <span>☁</span>
+              <span class="vfs-file-name" title="${esc(f.name)}">${esc(f.name)}</span>
+              <span class="vfs-badge cloud">CLOUD</span>
+              <span class="vfs-file-meta">${lines}L</span>
+              <button class="vfs-del-btn" data-vfs-del="${esc(f.name)}" title="Delete file">✕</button>
+            </div>
+          `;
+        }).join('');
+      }
+    }
+
+    // 2. Report Section
+    if (vfsFilter === 'all' || vfsFilter === 'report') {
+      html += `
+        <div class="vfs-section-title">
+          <span>📄 STANDARD ABAP REPORTS</span>
+          <span style="font-weight:normal;opacity:0.8;">${reportFiles.length}</span>
+        </div>
+      `;
+      if (!reportFiles.length) {
+        html += `<div style="padding:6px 10px;font-size:10px;color:#8599ad;font-style:italic;">No reports.</div>`;
+      } else {
+        html += reportFiles.map(f => {
+          const lines = (f.code || '').split('\n').length;
+          const isActive = f.name === currentFile;
+          return `
+            <div class="vfs-file-item ${isActive ? 'active' : ''}" data-vfs-open="${esc(f.name)}">
+              <span>📄</span>
+              <span class="vfs-file-name" title="${esc(f.name)}">${esc(f.name)}</span>
+              <span class="vfs-badge report">REPORT</span>
+              <span class="vfs-file-meta">${lines}L</span>
+              <button class="vfs-del-btn" data-vfs-del="${esc(f.name)}" title="Delete file">✕</button>
+            </div>
+          `;
+        }).join('');
+      }
+    }
+
+    host.innerHTML = html;
+
+    // Bind item click
+    host.querySelectorAll('[data-vfs-open]').forEach(item => {
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('[data-vfs-del]')) return;
+        const targetName = item.dataset.vfsOpen;
+        if (targetName === currentFile) return;
+
+        // Auto-flush current file
+        const liveVfs = getVFSFiles();
+        liveVfs[currentFile] = $('gui-source').value;
+        saveVFSFiles(liveVfs);
+
+        // Switch
+        currentFile = targetName;
+        state.editorFilename = targetName;
+        setActiveVFSFileName(targetName);
+        const newCode = liveVfs[targetName] || '';
+        $('gui-source').value = newCode;
+        currentCategory = getFileCategory(targetName, newCode);
+
+        $('editor-active-icon').textContent = currentCategory === 'cloud' ? '☁' : '📄';
+        $('editor-active-name').textContent = targetName;
+        $('editor-active-badge').className = `vfs-badge ${currentCategory}`;
+        $('editor-active-badge').textContent = currentCategory.toUpperCase();
+        $('gui-mode').value = currentCategory === 'cloud' ? 'cloud' : 'standard';
+
+        $('editor-save-status').className = 'editor-status-pill saved';
+        $('editor-save-status').textContent = '✓ Saved';
+
+        updateGutter();
+        renderVfsList();
+        resetSelectionScreen();
+        setStatus(`Loaded: ${targetName}`);
+      });
+    });
+
+    // Bind delete click
+    host.querySelectorAll('[data-vfs-del]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const delName = btn.dataset.vfsDel;
+        const liveVfs = getVFSFiles();
+        const keys = Object.keys(liveVfs);
+        if (keys.length <= 1) {
+          alert('Cannot delete the only remaining program in the Virtual File System.');
+          return;
+        }
+        if (!confirm(`Are you sure you want to delete ${delName} from the Virtual File System?`)) return;
+
+        delete liveVfs[delName];
+        saveVFSFiles(liveVfs);
+
+        if (delName === currentFile) {
+          const next = Object.keys(liveVfs)[0];
+          currentFile = next;
+          state.editorFilename = next;
+          setActiveVFSFileName(next);
+          $('gui-source').value = liveVfs[next] || '';
+          currentCategory = getFileCategory(next, liveVfs[next]);
+          $('editor-active-icon').textContent = currentCategory === 'cloud' ? '☁' : '📄';
+          $('editor-active-name').textContent = next;
+          $('editor-active-badge').className = `vfs-badge ${currentCategory}`;
+          $('editor-active-badge').textContent = currentCategory.toUpperCase();
+          $('gui-mode').value = currentCategory === 'cloud' ? 'cloud' : 'standard';
+          updateGutter();
+        }
+        renderVfsList();
+        showToast(`Deleted ${delName}`);
+      });
+    });
+  };
+
+  renderVfsList();
+
+  // Category filter tabs
+  document.querySelectorAll('[data-vfs-filter]').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('[data-vfs-filter]').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      vfsFilter = tab.dataset.vfsFilter;
+      renderVfsList();
+    });
+  });
+
+  // Search box
+  $('vfs-search-input').addEventListener('input', (e) => {
+    vfsSearch = e.target.value;
+    renderVfsList();
+  });
+
+  // + New Report Button
+  $('vfs-btn-new-report').addEventListener('click', () => {
+    let name = prompt('New Standard ABAP Report name (e.g. Z_MY_REPORT.abap):');
+    if (!name || !name.trim()) return;
+    name = name.trim();
+    if (!name.endsWith('.abap')) name += '.abap';
+    const curVfs = getVFSFiles();
+    if (curVfs[name]) {
+      alert(`Program "${name}" already exists in Virtual File System.`);
+      return;
+    }
+    const cleanRep = name.replace('.abap', '').toLowerCase();
+    curVfs[name] = `REPORT ${cleanRep}.
+
+" =====================================================================
+" STANDARD ABAP EXECUTABLE REPORT
+" =====================================================================
+
+DATA: lv_msg TYPE string VALUE 'Hello from SE38 Report'.
+
+WRITE: / '-------------------------------------------------------',
+       / lv_msg,
+       / 'Executed in Stateless Ephemeral VM.',
+       / '-------------------------------------------------------'.
+`;
+    saveVFSFiles(curVfs);
+    currentFile = name;
+    state.editorFilename = name;
+    setActiveVFSFileName(name);
+    $('gui-source').value = curVfs[name];
+    currentCategory = 'report';
+    $('editor-active-icon').textContent = '📄';
+    $('editor-active-name').textContent = name;
+    $('editor-active-badge').className = 'vfs-badge report';
+    $('editor-active-badge').textContent = 'REPORT';
+    $('gui-mode').value = 'standard';
+    updateGutter();
+    renderVfsList();
+    showToast(`Created report: ${name}`);
+  });
+
+  // + New Cloud Class Button
+  $('vfs-btn-new-cloud').addEventListener('click', () => {
+    let name = prompt('New ABAP Cloud Class name (e.g. ZCL_MY_SERVICE.abap):');
+    if (!name || !name.trim()) return;
+    name = name.trim();
+    if (!name.endsWith('.abap')) name += '.abap';
+    const curVfs = getVFSFiles();
+    if (curVfs[name]) {
+      alert(`Class "${name}" already exists in Virtual File System.`);
+      return;
+    }
+    const cleanCls = name.replace('.abap', '').toLowerCase();
+    curVfs[name] = `CLASS ${cleanCls} DEFINITION PUBLIC FINAL CREATE PUBLIC.
+  PUBLIC SECTION.
+    INTERFACES if_oo_adt_classrun.
+ENDCLASS.
+
+CLASS ${cleanCls} IMPLEMENTATION.
+  METHOD if_oo_adt_classrun~main.
+    out->write( '-------------------------------------------------------' ).
+    out->write( '  ABAPC STUDIO 5.0.1 - ABAP CLOUD RUNTIME' ).
+    out->write( '-------------------------------------------------------' ).
+    out->write( 'Interface: if_oo_adt_classrun' ).
+    out->write( 'Hello ABAP Cloud!' ).
+  ENDMETHOD.
+ENDCLASS.
+`;
+    saveVFSFiles(curVfs);
+    currentFile = name;
+    state.editorFilename = name;
+    setActiveVFSFileName(name);
+    $('gui-source').value = curVfs[name];
+    currentCategory = 'cloud';
+    $('editor-active-icon').textContent = '☁';
+    $('editor-active-name').textContent = name;
+    $('editor-active-badge').className = 'vfs-badge cloud';
+    $('editor-active-badge').textContent = 'CLOUD';
+    $('gui-mode').value = 'cloud';
+    updateGutter();
+    renderVfsList();
+    showToast(`Created cloud class: ${name}`);
+  });
+
+  // Selection Screen Helpers
+  const resetSelectionScreen = () => {
+    parameterSpecs = null;
+    parameterSource = null;
+    parameterMode = null;
+    const p = $('gui-parameters');
+    if (p) {
+      p.innerHTML = '';
+      p.style.display = 'none';
+    }
+    const pr = $('sap-params-resizer');
+    if (pr) pr.style.display = 'none';
+    $('gui-run').textContent = '▶ Execute (F8)';
+  };
+
+  const rangeRowMarkup = (v, i, rowIndex, initialRow = null) => {
+    const noIntervals = !!v.noIntervals;
+    const sign = String(initialRow?.SIGN ?? initialRow?.sign ?? 'I').toUpperCase();
+    const option = String(initialRow?.OPTION ?? initialRow?.option ?? 'EQ').toUpperCase();
+    const low = String(initialRow?.LOW ?? initialRow?.low ?? '');
+    const high = String(initialRow?.HIGH ?? initialRow?.high ?? '');
+    const opts = (noIntervals ? ['EQ', 'NE', 'GT', 'GE', 'LT', 'LE', 'CP', 'NP'] : ['EQ', 'NE', 'GT', 'GE', 'LT', 'LE', 'BT', 'NB', 'CP', 'NP']).map(o => `<option value="${o}" ${o === option ? 'selected' : ''}>${o}</option>`).join('');
     return `<div class="range-row" data-range-row data-range-index="${rowIndex}">
-      <select aria-label="Include or exclude" data-range-part="sign"><option value="I" ${sign==='I'?'selected':''}>Include</option><option value="E" ${sign==='E'?'selected':''}>Exclude</option></select>
+      <select aria-label="Include or exclude" data-range-part="sign"><option value="I" ${sign === 'I' ? 'selected' : ''}>Include</option><option value="E" ${sign === 'E' ? 'selected' : ''}>Exclude</option></select>
       <select aria-label="Selection option" data-range-part="option">${opts}</select>
       <input aria-label="Low value" placeholder="Low value" value="${esc(low)}" data-range-part="low" data-f4-name="${esc(v.name)}" data-f4-row="${rowIndex}" />
-      ${noIntervals?'':`<input aria-label="High value" placeholder="High value" value="${esc(high)}" data-range-part="high" ${['BT','NB'].includes(option)?'':'disabled'} />`}
+      ${noIntervals ? '' : `<input aria-label="High value" placeholder="High value" value="${esc(high)}" data-range-part="high" ${['BT', 'NB'].includes(option) ? '' : 'disabled'} />`}
       <button class="secondary-btn small-btn" type="button" data-range-f4 title="Value help">F4</button>
-      ${v.noExtension?'':'<button class="secondary-btn small-btn" type="button" data-range-remove title="Remove row">−</button>'}
+      ${v.noExtension ? '' : '<button class="secondary-btn small-btn" type="button" data-range-remove title="Remove row">−</button>'}
     </div>`;
   };
-  const syncRangeRow=(row)=>{
-    const option=row.querySelector('[data-range-part="option"]')?.value||'EQ';
-    const high=row.querySelector('[data-range-part="high"]');if(!high)return;
-    const enabled=['BT','NB'].includes(option);high.disabled=!enabled;if(!enabled)high.value='';
+
+  const syncRangeRow = (row) => {
+    const option = row.querySelector('[data-range-part="option"]')?.value || 'EQ';
+    const high = row.querySelector('[data-range-part="high"]');
+    if (!high) return;
+    const enabled = ['BT', 'NB'].includes(option);
+    high.disabled = !enabled;
+    if (!enabled) high.value = '';
   };
-  const bindRangeRows=(root)=>root.querySelectorAll('[data-range-row]').forEach(row=>{
-    syncRangeRow(row);const select=row.querySelector('[data-range-part="option"]');
-    if(select&&select.dataset.bound!=='1'){select.dataset.bound='1';select.addEventListener('change',()=>syncRangeRow(row));}
+
+  const bindRangeRows = (root) => root.querySelectorAll('[data-range-row]').forEach(row => {
+    syncRangeRow(row);
+    const select = row.querySelector('[data-range-part="option"]');
+    if (select && select.dataset.bound !== '1') {
+      select.dataset.bound = '1';
+      select.addEventListener('change', () => syncRangeRow(row));
+    }
   });
-  const drawSelectionScreen=(specs)=>{
-    const host=$('gui-parameters');
-    const visible=specs.filter(v=>!v.noDisplay);
-    const radioDefault=v=>v.initialValue===true||String(v.initialValue??'').toUpperCase()==='X'||String(v.initialValue??'').toUpperCase()==='TRUE';
-    const fields=visible.map((v,i)=>{
-      const type=v.type?.name||v.type?.kind||'string';
-      const def=v.initialValue===undefined?(type==='i'||type==='int8'||type.startsWith('decfloat')?'0':''):String(v.initialValue);
-      const label=String(v.name||'').toUpperCase();
-      if(v.selectionOptions){
-        const defaultRows=Array.isArray(v.initialValue)&&v.initialValue.length?v.initialValue:[null];
-        return `<label>${esc(label)}${v.obligatory?' *':''}<button class="secondary-btn small-btn field-help-btn" type="button" data-help-param="${esc(v.name)}" title="Field help">?</button><div class="small-note range-reference">${esc(v.forField||'Selection range')}</div></label><div class="range-host" data-range-host data-range-name="${esc(v.name)}" data-range-required="${v.obligatory?'1':'0'}" data-range-no-extension="${v.noExtension?'1':'0'}"> <div class="range-rows">${defaultRows.map((row,j)=>rangeRowMarkup(v,i,j,row)).join('')}</div>${v.noExtension?'':`<button class="secondary-btn small-btn" type="button" data-range-add="${i}">+ Add range</button>`}</div>`;
+
+  const drawSelectionScreen = (specs) => {
+    const host = $('gui-parameters');
+    const pResizer = $('sap-params-resizer');
+    host.style.display = 'block';
+    if (pResizer) pResizer.style.display = 'flex';
+    const savedH = localStorage.getItem('abapc_params_height') || '180';
+    host.style.height = savedH + 'px';
+    host.style.maxHeight = 'none';
+    const visible = specs.filter(v => !v.noDisplay);
+    const radioDefault = v => v.initialValue === true || String(v.initialValue ?? '').toUpperCase() === 'X' || String(v.initialValue ?? '').toUpperCase() === 'TRUE';
+    const fields = visible.map((v, i) => {
+      const type = v.type?.name || v.type?.kind || 'string';
+      const def = v.initialValue === undefined ? (type === 'i' || type === 'int8' || type.startsWith('decfloat') ? '0' : '') : String(v.initialValue);
+      const label = String(v.name || '').toUpperCase();
+      if (v.selectionOptions) {
+        const defaultRows = Array.isArray(v.initialValue) && v.initialValue.length ? v.initialValue : [null];
+        return `<label>${esc(label)}${v.obligatory ? ' *' : ''}<button class="secondary-btn small-btn field-help-btn" type="button" data-help-param="${esc(v.name)}" title="Field help">?</button><div class="small-note range-reference">${esc(v.forField || 'Selection range')}</div></label><div class="range-host" data-range-host data-range-name="${esc(v.name)}" data-range-required="${v.obligatory ? '1' : '0'}" data-range-no-extension="${v.noExtension ? '1' : '0'}"> <div class="range-rows">${defaultRows.map((row, j) => rangeRowMarkup(v, i, j, row)).join('')}</div>${v.noExtension ? '' : `<button class="secondary-btn small-btn" type="button" data-range-add="${i}">+ Add range</button>`}</div>`;
       }
-      if(v.radiobuttonGroup){
-        const checked=radioDefault(v);
-        return `<label for="gui-param-${i}">${esc(label)}${v.obligatory?' *':''}<button class="secondary-btn small-btn field-help-btn" type="button" data-help-param="${esc(v.name)}" title="Field help">?</button><div class="small-note">Group ${esc(v.radiobuttonGroup)}</div></label><div><input id="gui-param-${i}" type="radio" name="gui-radio-${esc(v.radiobuttonGroup)}" data-param-name="${esc(v.name)}" data-param-radio-group="${esc(v.radiobuttonGroup)}" ${checked?'checked':''}/></div>`;
+      if (v.radiobuttonGroup) {
+        const checked = radioDefault(v);
+        return `<label for="gui-param-${i}">${esc(label)}${v.obligatory ? ' *' : ''}<button class="secondary-btn small-btn field-help-btn" type="button" data-help-param="${esc(v.name)}" title="Field help">?</button><div class="small-note">Group ${esc(v.radiobuttonGroup)}</div></label><div><input id="gui-param-${i}" type="radio" name="gui-radio-${esc(v.radiobuttonGroup)}" data-param-name="${esc(v.name)}" data-param-radio-group="${esc(v.radiobuttonGroup)}" ${checked ? 'checked' : ''}/></div>`;
       }
-      if(v.checkbox){return `<label for="gui-param-${i}">${esc(label)}${v.obligatory?' *':''}<button class="secondary-btn small-btn field-help-btn" type="button" data-help-param="${esc(v.name)}" title="Field help">?</button></label><div><input id="gui-param-${i}" type="checkbox" data-param-name="${esc(v.name)}" data-param-required="${v.obligatory?'1':'0'}" ${def==='X'||def==='true'||def==='1'?'checked':''}/></div>`;}
-      const inputType=['i','int8','decfloat16','decfloat34'].includes(type)?'number':'text';
-      const valueInput=`<input id="gui-param-${i}" data-param-name="${esc(v.name)}" data-param-required="${v.obligatory?'1':'0'}" data-param-type="${esc(type)}" type="${inputType}" value="${esc(def)}" ${v.obligatory?'required':''}/>`;
-      return `<label for="gui-param-${i}">${esc(label)}${v.obligatory?' *':''}<button class="secondary-btn small-btn field-help-btn" type="button" data-help-param="${esc(v.name)}" title="Field help">?</button></label><div class="parameter-input-wrap">${valueInput}${v.valueHelp?`<button class="secondary-btn small-btn" type="button" data-f4-param="${esc(v.name)}">F4</button>`:''}</div>`;
+      if (v.checkbox) {
+        return `<label for="gui-param-${i}">${esc(label)}${v.obligatory ? ' *' : ''}<button class="secondary-btn small-btn field-help-btn" type="button" data-help-param="${esc(v.name)}" title="Field help">?</button></label><div><input id="gui-param-${i}" type="checkbox" data-param-name="${esc(v.name)}" data-param-required="${v.obligatory ? '1' : '0'}" ${def === 'X' || def === 'true' || def === '1' ? 'checked' : ''}/></div>`;
+      }
+      const inputType = ['i', 'int8', 'decfloat16', 'decfloat34'].includes(type) ? 'number' : 'text';
+      const valueInput = `<input id="gui-param-${i}" data-param-name="${esc(v.name)}" data-param-required="${v.obligatory ? '1' : '0'}" data-param-type="${esc(type)}" type="${inputType}" value="${esc(def)}" ${v.obligatory ? 'required' : ''}/>`;
+      return `<label for="gui-param-${i}">${esc(label)}${v.obligatory ? ' *' : ''}<button class="secondary-btn small-btn field-help-btn" type="button" data-help-param="${esc(v.name)}" title="Field help">?</button></label><div class="parameter-input-wrap">${valueInput}${v.valueHelp ? `<button class="secondary-btn small-btn" type="button" data-f4-param="${esc(v.name)}">F4</button>` : ''}</div>`;
     }).join('');
-    host.innerHTML=`<div class="panel selection-screen-panel"><div class="panel-title">Selection Screen <span class="muted">· 1000 · local simulation</span></div><div class="panel-body"><p class="small-note">Enter report parameters and ranges, then choose <b>Run with inputs</b>. F4 uses local training values.</p><div class="sap-form-grid">${fields}</div><div class="small-note">Fields marked * are mandatory. Selection options support include/exclude and EQ, NE, GT, GE, LT, LE, BT, NB, CP, NP. Values are passed to the local ABAPC runtime, not to an SAP application server.</div></div></div>`;
+
+    host.innerHTML = `<div class="panel selection-screen-panel"><div class="panel-title" style="display:flex;justify-content:space-between;align-items:center;"><span>Selection Screen <span class="muted">· 1000 · local simulation</span></span><button class="sap-pane-toggle-btn" id="btn-toggle-params-collapse" type="button" title="Collapse / Expand Parameters">▼ Parameters</button></div><div class="panel-body" id="params-panel-body"><p class="small-note">Enter report parameters and ranges, then choose <b>Run with inputs</b>. F4 uses local training values.</p><div class="sap-form-grid">${fields}</div></div></div>`;
+    const toggleBtn = $('btn-toggle-params-collapse');
+    const panelBody = $('params-panel-body');
+    if (toggleBtn && panelBody) {
+      toggleBtn.addEventListener('click', () => {
+        const isHidden = panelBody.style.display === 'none';
+        if (isHidden) {
+          panelBody.style.display = 'block';
+          toggleBtn.textContent = '▼ Parameters';
+          const savedH = localStorage.getItem('abapc_params_height') || '180';
+          host.style.height = savedH + 'px';
+          if (pResizer) pResizer.style.display = 'flex';
+        } else {
+          panelBody.style.display = 'none';
+          toggleBtn.textContent = '▲ Parameters';
+          host.style.height = 'auto';
+          if (pResizer) pResizer.style.display = 'none';
+        }
+      });
+    }
     bindRangeRows(host);
-    host.querySelectorAll('[data-range-add]').forEach(button=>button.addEventListener('click',()=>{
-      const hostEl=button.closest('[data-range-host]');if(!hostEl)return;const name=hostEl.dataset.rangeName;const v=specs.find(x=>String(x.name).toUpperCase()===String(name).toUpperCase());if(!v)return;
-      const rows=hostEl.querySelector('.range-rows');if(!rows)return;const count=rows.querySelectorAll('[data-range-row]').length;rows.insertAdjacentHTML('beforeend',rangeRowMarkup(v,Number(button.dataset.rangeAdd),count));const newest=rows.lastElementChild;if(newest){newest.querySelector('[data-range-remove]')?.addEventListener('click',()=>newest.remove());bindRangeRows(newest);}bindF4Buttons(rows);
+    host.querySelectorAll('[data-range-add]').forEach(button => button.addEventListener('click', () => {
+      const hostEl = button.closest('[data-range-host]');
+      if (!hostEl) return;
+      const name = hostEl.dataset.rangeName;
+      const v = specs.find(x => String(x.name).toUpperCase() === String(name).toUpperCase());
+      if (!v) return;
+      const rows = hostEl.querySelector('.range-rows');
+      if (!rows) return;
+      const count = rows.querySelectorAll('[data-range-row]').length;
+      rows.insertAdjacentHTML('beforeend', rangeRowMarkup(v, Number(button.dataset.rangeAdd), count));
+      const newest = rows.lastElementChild;
+      if (newest) {
+        newest.querySelector('[data-range-remove]')?.addEventListener('click', () => newest.remove());
+        bindRangeRows(newest);
+      }
+      bindF4Buttons(rows);
     }));
-    host.querySelectorAll('[data-range-remove]').forEach(button=>button.addEventListener('click',()=>button.closest('[data-range-row]')?.remove()));
+    host.querySelectorAll('[data-range-remove]').forEach(button => button.addEventListener('click', () => button.closest('[data-range-row]')?.remove()));
     bindF4Buttons(host);
   };
-  const openValueHelp=async(name,input)=>{
-    const v=parameterSpecs?.find(x=>String(x.name).toUpperCase()===String(name).toUpperCase());
-    let values=[];
-    try{
-      const eventResult=await jsonPost('/api/selection-event',{source:$('gui-source').value,mode:$('gui-mode').value,filename:$('gui-filename').value,event:'at-selection-screen-value-request',target:name,parameterValues:{[name]:input.value}});
-      if(eventResult.ok&&Array.isArray(eventResult.output)&&eventResult.output.length)values=eventResult.output.map(String).map(x=>x.trim()).filter(Boolean);
-    }catch{}
-    try{
-      const tables=await getTables();
-      const reference=String(v?.forField||'').toUpperCase().split('-');
-      const table=reference.length>1?reference[0]:'';const field=reference.length>1?reference.slice(1).join('-'):'';
-      if(!values.length&&table&&field&&Array.isArray(tables[table]))values=tables[table].map(row=>row[field]??row[field.toUpperCase()]).filter(x=>x!==undefined&&x!==null).map(String);
-    }catch{}
-    if(!values.length){
-      const key=String(v?.valueHelp||v?.forField||name).toUpperCase();
-      if(key.includes('CARR')||key.includes('AIRLINE'))values=['AA','LH','SQ'];
-      else if(key.includes('COUNTRY'))values=['DE','IN','JP','SG','US'];
-      else if(key.includes('DATE')||key.includes('DATUM'))values=['2026-10-01','2026-10-02','2026-10-03'];
-      else values=['A','B','C','100','200','300'];
+
+  const openValueHelp = async (name, input) => {
+    const v = parameterSpecs?.find(x => String(x.name).toUpperCase() === String(name).toUpperCase());
+    let values = [];
+    try {
+      const eventResult = await jsonPost('/api/selection-event', { source: $('gui-source').value, mode: $('gui-mode').value, filename: currentFile, event: 'at-selection-screen-value-request', target: name, parameterValues: { [name]: input.value } });
+      if (eventResult.ok && Array.isArray(eventResult.output) && eventResult.output.length) values = eventResult.output.map(String).map(x => x.trim()).filter(Boolean);
+    } catch {}
+    try {
+      const tables = await getTables();
+      const reference = String(v?.forField || '').toUpperCase().split('-');
+      const table = reference.length > 1 ? reference[0] : '';
+      const field = reference.length > 1 ? reference.slice(1).join('-') : '';
+      if (!values.length && table && field && Array.isArray(tables[table])) values = tables[table].map(row => row[field] ?? row[field.toUpperCase()]).filter(x => x !== undefined && x !== null).map(String);
+    } catch {}
+    if (!values.length) {
+      const key = String(v?.valueHelp || v?.forField || name).toUpperCase();
+      if (key.includes('CARR') || key.includes('AIRLINE')) values = ['AA', 'LH', 'SQ'];
+      else if (key.includes('COUNTRY')) values = ['DE', 'IN', 'JP', 'SG', 'US'];
+      else if (key.includes('DATE') || key.includes('DATUM')) values = ['2026-10-01', '2026-10-02', '2026-10-03'];
+      else values = ['A', 'B', 'C', '100', '200', '300'];
     }
-    values=[...new Set(values)];
+    values = [...new Set(values)];
     document.querySelector('.f4-overlay')?.remove();
-    const overlay=document.createElement('div');overlay.className='f4-overlay';
-    overlay.innerHTML=`<div class="f4-dialog" role="dialog" aria-modal="true" aria-label="Value help"><div class="f4-title">Value Help <span>${esc(String(name).toUpperCase())}</span><button type="button" data-f4-close>×</button></div><input class="f4-search" placeholder="Search values…" aria-label="Search values"><div class="f4-values">${values.map(value=>`<button type="button" class="f4-value" data-f4-value="${esc(value)}">${esc(value)}</button>`).join('')}</div><div class="small-note">Local values for practice only.</div></div>`;
+    const overlay = document.createElement('div');
+    overlay.className = 'f4-overlay';
+    overlay.innerHTML = `<div class="f4-dialog" role="dialog" aria-modal="true" aria-label="Value help"><div class="f4-title">Value Help <span>${esc(String(name).toUpperCase())}</span><button type="button" data-f4-close>×</button></div><input class="f4-search" placeholder="Search values…" aria-label="Search values"><div class="f4-values">${values.map(val => `<button type="button" class="f4-value" data-f4-value="${esc(val)}">${esc(val)}</button>`).join('')}</div><div class="small-note">Local values for practice only.</div></div>`;
     document.body.append(overlay);
-    overlay.addEventListener('click',e=>{if(e.target===overlay||e.target.closest('[data-f4-close]')){overlay.remove();return;}const item=e.target.closest('[data-f4-value]');if(item){input.value=item.dataset.f4Value;input.dispatchEvent(new Event('input',{bubbles:true}));overlay.remove();input.focus();}});
-    overlay.querySelector('.f4-search').addEventListener('input',e=>{const q=e.target.value.toLowerCase();overlay.querySelectorAll('[data-f4-value]').forEach(b=>b.hidden=!b.dataset.f4Value.toLowerCase().includes(q));});
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay || e.target.closest('[data-f4-close]')) { overlay.remove(); return; }
+      const item = e.target.closest('[data-f4-value]');
+      if (item) {
+        input.value = item.dataset.f4Value;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        overlay.remove();
+        input.focus();
+      }
+    });
+    overlay.querySelector('.f4-search').addEventListener('input', e => {
+      const q = e.target.value.toLowerCase();
+      overlay.querySelectorAll('[data-f4-value]').forEach(b => b.hidden = !b.dataset.f4Value.toLowerCase().includes(q));
+    });
     overlay.querySelector('.f4-search').focus();
   };
-  const openFieldHelp=async(name)=>{
-    let message='Local ABAPC selection field. Enter a value manually or use F4 for available local training values.';
-    try{
-      const result=await jsonPost('/api/selection-event',{source:$('gui-source').value,mode:$('gui-mode').value,filename:$('gui-filename').value,event:'at-selection-screen-help-request',target:name,parameterValues:{}});
-      if(result.ok&&result.output?.length)message=result.output.map(String).join('\n');
-    }catch{}
-    document.querySelector('.f4-overlay')?.remove();const overlay=document.createElement('div');overlay.className='f4-overlay';
-    overlay.innerHTML=`<div class="f4-dialog" role="dialog" aria-modal="true" aria-label="Field help"><div class="f4-title">Field Help <span>${esc(String(name).toUpperCase())}</span><button type="button" data-f4-close>×</button></div><pre class="f4-help-text">${esc(message)}</pre><div class="small-note">Help is evaluated by the local ABAPC runtime where a matching help-request event exists.</div></div>`;
-    document.body.append(overlay);overlay.addEventListener('click',e=>{if(e.target===overlay||e.target.closest('[data-f4-close]'))overlay.remove();});
-  };
-  const bindF4Buttons=(root)=>{
-    root.querySelectorAll('[data-range-f4]').forEach(button=>{if(button.dataset.bound==='1')return;button.dataset.bound='1';button.addEventListener('click',()=>{const row=button.closest('[data-range-row]');const low=row?.querySelector('[data-range-part="low"]');if(low)openValueHelp(row.closest('[data-range-host]')?.dataset.rangeName,low);});});
-    root.querySelectorAll('[data-f4-param]').forEach(button=>{if(button.dataset.bound==='1')return;button.dataset.bound='1';button.addEventListener('click',()=>{const input=[...document.querySelectorAll('[data-param-name]')].find(x=>x.dataset.paramName?.toUpperCase()===button.dataset.f4Param.toUpperCase());if(input)openValueHelp(button.dataset.f4Param,input);});});
-    root.querySelectorAll('[data-help-param]').forEach(button=>{if(button.dataset.bound==='1')return;button.dataset.bound='1';button.addEventListener('click',()=>openFieldHelp(button.dataset.helpParam));});
-  };
-  $('gui-source').addEventListener('input',resetSelectionScreen);
-  $('gui-mode').addEventListener('change',resetSelectionScreen);
-  $('gui-filename').addEventListener('input', e=>{state.editorFilename=e.target.value;});
-  $('gui-restore-draft').addEventListener('click',()=>{try{const d=JSON.parse(localStorage.getItem('abapc-editor-draft')||'null');if(!d||typeof d.source!=='string'){showGuiOutput('err','No saved local draft found.');return;}$('gui-source').value=d.source;resetSelectionScreen();$('gui-filename').value=d.filename||'program.abap';$('gui-mode').value=d.mode==='standard'?'standard':'cloud';state.editorFilename=$('gui-filename').value;showGuiOutput('ok',`Restored local draft: ${state.editorFilename}`);setStatus('Local editor draft restored');}catch{showGuiOutput('err','Could not restore local draft.');}});
-  $('gui-example').addEventListener('change', async e=>{if(!e.target.value)return;try{const d=await jsonGet('/api/example?name='+encodeURIComponent(e.target.value));$('gui-source').value=d.source;resetSelectionScreen();$('gui-filename').value=e.target.value;state.editorFilename=e.target.value;state.editorPreset=e.target.value;setStatus(`Loaded ${e.target.value}`);}catch(err){showGuiOutput('err',String(err));}});
-  $('gui-build').addEventListener('click', async()=>{
-    setStatus('Building source…'); const body={source:$('gui-source').value,mode:$('gui-mode').value,filename:$('gui-filename').value};
-    try { const d=await jsonPost('/api/compile',body); renderGuiDiagnostics(d.diagnostics||[]); const errs=d.stats?.errors||0; showGuiOutput(errs?'err':'ok',errs?`Build failed (${errs} error(s)).`:'Build succeeded. No execution performed.'); setStatus(errs?'Build failed':'Build succeeded'); }
-    catch(e){showGuiOutput('err',String(e));setStatus('Build failed');}
-  });
-  $('gui-run').addEventListener('click', async()=>{
-    const run=$('gui-run');run.disabled=true;setStatus('Executing…');
+
+  const openFieldHelp = async (name) => {
+    let message = 'Local ABAPC selection field. Enter a value manually or use F4 for available local training values.';
     try {
-      const sourceNow=$('gui-source').value, modeNow=$('gui-mode').value, filenameNow=$('gui-filename').value;
-      if(parameterSource!==sourceNow||parameterMode!==modeNow){parameterSpecs=null;parameterSource=null;parameterMode=null;}
-      if(!parameterSpecs){
-        const checked=await jsonPost('/api/compile',{source:sourceNow,mode:modeNow,filename:filenameNow});
-        renderGuiDiagnostics(checked.diagnostics||[]);
-        if((checked.stats?.errors||0)>0){showGuiOutput('err',`Compilation failed (${checked.stats.errors} error(s)).`);setStatus('Compilation failed');return;}
-        const detectedBase=(checked.ir?.vars||[]).filter(v=>v.parameter);
-        if(detectedBase.length){
-          let defaults={};
-          try{const preview=await jsonPost('/api/selection-preview',{source:sourceNow,mode:modeNow,filename:filenameNow});if(preview.ok)defaults=preview.variables||{};}catch{}
-          const detected=detectedBase.map(v=>{const key=String(v.name||'').toUpperCase();return Object.prototype.hasOwnProperty.call(defaults,key)?{...v,initialValue:defaults[key]}:v;});
-          parameterSpecs=detected;parameterSource=sourceNow;parameterMode=modeNow;drawSelectionScreen(detected);run.textContent='▶ Run with inputs';showGuiOutput('ok',`Selection screen generated: ${detected.length} parameter(s). Initialization defaults were evaluated where supported. Enter values above, then select Run with inputs.`);setStatus('Selection screen ready · enter report parameters');return;
+      const result = await jsonPost('/api/selection-event', { source: $('gui-source').value, mode: $('gui-mode').value, filename: currentFile, event: 'at-selection-screen-help-request', target: name, parameterValues: {} });
+      if (result.ok && result.output?.length) message = result.output.map(String).join('\n');
+    } catch {}
+    document.querySelector('.f4-overlay')?.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'f4-overlay';
+    overlay.innerHTML = `<div class="f4-dialog" role="dialog" aria-modal="true" aria-label="Field help"><div class="f4-title">Field Help <span>${esc(String(name).toUpperCase())}</span><button type="button" data-f4-close>×</button></div><pre class="f4-help-text">${esc(message)}</pre><div class="small-note">Help is evaluated by the local ABAPC runtime.</div></div>`;
+    document.body.append(overlay);
+    overlay.addEventListener('click', e => { if (e.target === overlay || e.target.closest('[data-f4-close]')) overlay.remove(); });
+  };
+
+  const bindF4Buttons = (root) => {
+    root.querySelectorAll('[data-range-f4]').forEach(button => {
+      if (button.dataset.bound === '1') return;
+      button.dataset.bound = '1';
+      button.addEventListener('click', () => {
+        const row = button.closest('[data-range-row]');
+        const low = row?.querySelector('[data-range-part="low"]');
+        if (low) openValueHelp(row.closest('[data-range-host]')?.dataset.rangeName, low);
+      });
+    });
+    root.querySelectorAll('[data-f4-param]').forEach(button => {
+      if (button.dataset.bound === '1') return;
+      button.dataset.bound = '1';
+      button.addEventListener('click', () => {
+        const input = [...document.querySelectorAll('[data-param-name]')].find(x => x.dataset.paramName?.toUpperCase() === button.dataset.f4Param.toUpperCase());
+        if (input) openValueHelp(button.dataset.f4Param, input);
+      });
+    });
+    root.querySelectorAll('[data-help-param]').forEach(button => {
+      if (button.dataset.bound === '1') return;
+      button.dataset.bound = '1';
+      button.addEventListener('click', () => openFieldHelp(button.dataset.helpParam));
+    });
+  };
+
+  // Auto-Save Toggle
+  $('btn-autosave-toggle').addEventListener('click', () => {
+    autoSaveEnabled = !autoSaveEnabled;
+    try { localStorage.setItem('abapc_autosave_enabled', autoSaveEnabled ? '1' : '0'); } catch {}
+    $('btn-autosave-toggle').textContent = autoSaveEnabled ? 'Auto-Save: ON' : 'Auto-Save: OFF';
+    showToast(`Auto-save ${autoSaveEnabled ? 'enabled' : 'disabled'}`);
+  });
+
+  // Debounced Auto-Save & Manual Save
+  let autoSaveTimer = null;
+  $('gui-source').addEventListener('input', () => {
+    resetSelectionScreen();
+    updateGutter();
+
+    if (autoSaveEnabled) {
+      $('editor-save-status').className = 'editor-status-pill saving';
+      $('editor-save-status').textContent = '● Saving...';
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(() => {
+        const curVfs = getVFSFiles();
+        curVfs[currentFile] = $('gui-source').value;
+        saveVFSFiles(curVfs);
+        $('editor-save-status').className = 'editor-status-pill saved';
+        $('editor-save-status').textContent = '✓ Saved';
+        setStatus(`Auto-saved ${currentFile}`);
+      }, 1500);
+    } else {
+      $('editor-save-status').className = 'editor-status-pill unsaved';
+      $('editor-save-status').textContent = '● Unsaved changes';
+    }
+  });
+
+  // Tab & Keyboard Indentation
+  $('gui-source').addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const el = e.target;
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      if (e.shiftKey) {
+        const lineStart = el.value.lastIndexOf('\n', start - 1) + 1;
+        if (el.value.slice(lineStart, lineStart + 2) === '  ') {
+          el.value = el.value.slice(0, lineStart) + el.value.slice(lineStart + 2);
+          el.selectionStart = el.selectionEnd = Math.max(lineStart, start - 2);
         }
+      } else {
+        el.value = el.value.substring(0, start) + '  ' + el.value.substring(end);
+        el.selectionStart = el.selectionEnd = start + 2;
       }
-      const parameterValues={};
-      if(parameterSpecs?.length){
-        const radioGroups=new Map();
-        for(const v of parameterSpecs){
-          if(v.noDisplay)continue;
-          if(v.selectionOptions){
-            const host=[...document.querySelectorAll('[data-range-host]')].find(x=>x.dataset.rangeName?.toUpperCase()===String(v.name).toUpperCase());if(!host){parameterValues[v.name]=[];continue;}
-            const rows=[...host.querySelectorAll('[data-range-row]')].map(row=>({sign:row.querySelector('[data-range-part="sign"]')?.value||'I',option:row.querySelector('[data-range-part="option"]')?.value||'EQ',low:row.querySelector('[data-range-part="low"]')?.value||'',high:v.noIntervals?'':(row.querySelector('[data-range-part="high"]')?.value||'')})).filter(row=>row.low.trim()!==''||row.high.trim()!=='');
-            if(v.obligatory&&!rows.length){host.querySelector('[data-range-part="low"]')?.focus();showGuiOutput('err',`At least one range is required for ${v.name}.`);setStatus(`Missing required selection ${v.name}`);return;}
-            parameterValues[v.name]=rows;continue;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      $('gui-vfs-save')?.click();
+    } else if (e.key === 'F8') {
+      e.preventDefault();
+      $('gui-run')?.click();
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'F2') {
+      e.preventDefault();
+      $('gui-build')?.click();
+    } else if (e.shiftKey && e.key === 'F1') {
+      e.preventDefault();
+      $('gui-pretty')?.click();
+    }
+  });
+
+  // Save Button
+  $('gui-vfs-save').addEventListener('click', () => {
+    const curVfs = getVFSFiles();
+    curVfs[currentFile] = $('gui-source').value;
+    saveVFSFiles(curVfs);
+    $('editor-save-status').className = 'editor-status-pill saved';
+    $('editor-save-status').textContent = '✓ Saved';
+    showToast(`Saved ${currentFile} to Virtual File System`);
+    setStatus(`VFS: ${currentFile} saved`);
+  });
+
+  // Pretty Printer (Shift+F1)
+  $('gui-pretty').addEventListener('click', () => {
+    const formatted = prettyPrintAbap($('gui-source').value);
+    $('gui-source').value = formatted;
+    updateGutter();
+    const curVfs = getVFSFiles();
+    curVfs[currentFile] = formatted;
+    saveVFSFiles(curVfs);
+    $('editor-save-status').className = 'editor-status-pill saved';
+    $('editor-save-status').textContent = '✓ Saved';
+    showToast('Pretty Printer: ABAP syntax formatted and saved');
+  });
+
+  // Output Tabs Rendering Function
+  const renderOutputView = () => {
+    const body = $('gui-output-body');
+    if (!body) return;
+
+    if (activeOutputTab === 'output') {
+      if (!lastOutputLines.length) {
+        body.innerHTML = '<div class="spool-line" style="color:#64748b;">Ready. Select Execute (F8) to run this program in the ephemeral ABAPC VM.</div>';
+        return;
+      }
+      body.innerHTML = lastOutputLines.map(line => {
+        if (line.startsWith('---') || line.startsWith('===')) {
+          return `<div class="spool-line" style="color:#64748b;font-weight:bold;">${esc(line)}</div>`;
+        }
+        if (line.includes('SUCCESS') || line.includes('Verified') || line.includes('Clean')) {
+          return `<div class="spool-line spool-ok">${esc(line)}</div>`;
+        }
+        if (line.includes('FAILED') || line.includes('Error') || line.includes('error') || line.includes('Division by zero')) {
+          return `<div class="spool-line spool-err">${esc(line)}</div>`;
+        }
+        return `<div class="spool-line">${esc(line)}</div>`;
+      }).join('');
+    } else if (activeOutputTab === 'diagnostics') {
+      if (!lastDiagnosticsList.length) {
+        body.innerHTML = '<div class="spool-line spool-ok">✓ Syntax check clean. No errors or warnings found.</div>';
+        return;
+      }
+      body.innerHTML = '<div class="output-diagnostics-view">' + lastDiagnosticsList.map(d =>
+        `<div class="diag-card-item" style="border-left:3px solid ${d.severity === 'warning' ? '#f59e0b' : '#ef4444'};"><div style="font-weight:bold;color:${d.severity === 'warning' ? '#fbbf24' : '#f87171'};font-size:11px;">${esc(d.severity || 'error').toUpperCase()} · ${esc(d.code || 'COMPILER')}${d.start ? ` [Line ${esc(d.start.line)}, Col ${esc(d.start.column)}]` : ''}</div><div style="color:#e2e8f0;margin-top:3px;font-size:12px;">${esc(d.message || '')}</div></div>`
+      ).join('') + '</div>';
+    } else if (activeOutputTab === 'variables') {
+      const vars = Object.entries(lastVariablesMap);
+      if (!vars.length) {
+        body.innerHTML = '<div class="spool-line" style="color:#64748b;">No variables captured in this run.</div>';
+        return;
+      }
+      body.innerHTML = `
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead>
+            <tr style="border-bottom:1px solid #334155;color:#94a3b8;text-align:left;">
+              <th style="padding:4px 6px;">Variable</th>
+              <th style="padding:4px 6px;">Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${vars.map(([k, v]) => `
+              <tr style="border-bottom:1px solid #1e293b;">
+                <td style="padding:4px 6px;color:#38bdf8;font-weight:bold;">${esc(k)}</td>
+                <td style="padding:4px 6px;color:#f1f5f9;">${esc(JSON.stringify(v))}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    } else if (activeOutputTab === 'ir') {
+      if (!lastIrData) {
+        body.innerHTML = '<div class="spool-line" style="color:#64748b;">No IR bytecode generated yet. Execute or Check the program.</div>';
+        return;
+      }
+      body.innerHTML = `<pre style="margin:0;color:#94a3b8;font-size:11px;">${esc(typeof lastIrData === 'string' ? lastIrData : JSON.stringify(lastIrData, null, 2))}</pre>`;
+    }
+  };
+
+  // Output Tab Switching
+  document.querySelectorAll('[data-output-tab]').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('[data-output-tab]').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      activeOutputTab = tab.dataset.outputTab;
+      renderOutputView();
+    });
+  });
+
+  // Copy Output
+  $('btn-copy-output').addEventListener('click', async () => {
+    const body = $('gui-output-body');
+    if (!body) return;
+    try {
+      await navigator.clipboard.writeText(body.innerText || '');
+      showToast('Copied output to clipboard');
+    } catch {
+      showToast('Failed to copy output');
+    }
+  });
+
+  // Clear Output
+  $('btn-clear-output').addEventListener('click', () => {
+    lastOutputLines = [];
+    lastDiagnosticsList = [];
+    lastVariablesMap = {};
+    $('output-diag-count').textContent = '0';
+    renderOutputView();
+    showToast('Console output cleared');
+  });
+
+  // Check / Compile (Ctrl+F2)
+  $('gui-build').addEventListener('click', async () => {
+    setStatus('Checking syntax…');
+    const body = { source: $('gui-source').value, mode: $('gui-mode').value, filename: currentFile };
+    try {
+      const d = await jsonPost('/api/compile', body);
+      lastDiagnosticsList = d.diagnostics || [];
+      lastIrData = d.ir || null;
+      $('output-diag-count').textContent = String(lastDiagnosticsList.length);
+      const errs = d.stats?.errors || 0;
+
+      const statusPill = $('output-status-pill');
+      if (statusPill) {
+        statusPill.className = `output-metric-pill ${errs ? 'failed' : 'success'}`;
+        statusPill.textContent = errs ? 'CHECK FAILED' : 'CHECK CLEAN';
+      }
+
+      if (errs > 0) {
+        activeOutputTab = 'diagnostics';
+        document.querySelectorAll('[data-output-tab]').forEach(t => t.classList.toggle('active', t.dataset.outputTab === 'diagnostics'));
+      } else {
+        lastOutputLines = ['[Syntax Check] Clean. No errors or warnings found.'];
+        activeOutputTab = 'output';
+        document.querySelectorAll('[data-output-tab]').forEach(t => t.classList.toggle('active', t.dataset.outputTab === 'output'));
+      }
+      renderOutputView();
+      setStatus(errs ? 'Syntax check failed' : 'Syntax check passed');
+    } catch (e) {
+      lastOutputLines = [`[Syntax Check Error] ${String(e)}`];
+      renderOutputView();
+      setStatus('Syntax check error');
+    }
+  });
+
+  // Execute (F8 / POST /api/run)
+  $('gui-run').addEventListener('click', async () => {
+    const runBtn = $('gui-run');
+    runBtn.disabled = true;
+    setStatus('Executing in ephemeral VM…');
+    const statusPill = $('output-status-pill');
+    if (statusPill) {
+      statusPill.className = 'output-metric-pill info';
+      statusPill.textContent = 'RUNNING…';
+    }
+
+    try {
+      const sourceNow = $('gui-source').value;
+      const modeNow = $('gui-mode').value;
+      const curVfs = getVFSFiles();
+      curVfs[currentFile] = sourceNow;
+      saveVFSFiles(curVfs);
+
+      if (parameterSource !== sourceNow || parameterMode !== modeNow) {
+        parameterSpecs = null;
+        parameterSource = null;
+        parameterMode = null;
+      }
+
+      if (!parameterSpecs) {
+        const checked = await jsonPost('/api/compile', { source: sourceNow, mode: modeNow, filename: currentFile });
+        lastDiagnosticsList = checked.diagnostics || [];
+        lastIrData = checked.ir || null;
+        $('output-diag-count').textContent = String(lastDiagnosticsList.length);
+
+        if ((checked.stats?.errors || 0) > 0) {
+          if (statusPill) {
+            statusPill.className = 'output-metric-pill failed';
+            statusPill.textContent = 'COMPILATION ERROR';
           }
-          const el=[...document.querySelectorAll('[data-param-name]')].find(x=>x.dataset.paramName?.toUpperCase()===String(v.name).toUpperCase());if(!el)continue;
-          if(v.radiobuttonGroup){const group=String(v.radiobuttonGroup).toUpperCase();if(!radioGroups.has(group))radioGroups.set(group,[]);radioGroups.get(group).push({v,el});continue;}
-          const value=el.type==='checkbox'?(el.checked?'X':''):el.value;
-          if(v.obligatory&&String(value).trim()===''){el.focus();showGuiOutput('err',`Required parameter ${v.name} is empty.`);setStatus(`Missing required parameter ${v.name}`);return;}
-          parameterValues[v.name]=value;
+          lastOutputLines = [`Compilation failed (${checked.stats.errors} error(s)). Check Diagnostics tab.`];
+          activeOutputTab = 'diagnostics';
+          document.querySelectorAll('[data-output-tab]').forEach(t => t.classList.toggle('active', t.dataset.outputTab === 'diagnostics'));
+          renderOutputView();
+          setStatus('Compilation failed');
+          return;
         }
-        for(const [group,entries] of radioGroups){const chosen=entries.find(x=>x.el.checked);for(const entry of entries)parameterValues[entry.v.name]=chosen&&chosen.v.name===entry.v.name?'X':'';if(entries.some(x=>x.v.obligatory)&&!chosen){entries[0]?.el.focus();showGuiOutput('err',`Choose one option in radio-button group ${group}.`);setStatus(`Radio-button group ${group} requires a selection`);return;}}
+
+        const detectedBase = (checked.ir?.vars || []).filter(v => v.parameter);
+        if (detectedBase.length) {
+          let defaults = {};
+          try {
+            const preview = await jsonPost('/api/selection-preview', { source: sourceNow, mode: modeNow, filename: currentFile });
+            if (preview.ok) defaults = preview.variables || {};
+          } catch {}
+          const detected = detectedBase.map(v => {
+            const key = String(v.name || '').toUpperCase();
+            return Object.prototype.hasOwnProperty.call(defaults, key) ? { ...v, initialValue: defaults[key] } : v;
+          });
+          parameterSpecs = detected;
+          parameterSource = sourceNow;
+          parameterMode = modeNow;
+          drawSelectionScreen(detected);
+          runBtn.textContent = '▶ Run with inputs';
+          lastOutputLines = [`Selection screen generated: ${detected.length} parameter(s). Enter values above, then select Run with inputs.`];
+          activeOutputTab = 'output';
+          document.querySelectorAll('[data-output-tab]').forEach(t => t.classList.toggle('active', t.dataset.outputTab === 'output'));
+          renderOutputView();
+          setStatus('Selection screen ready · enter report parameters');
+          return;
+        }
       }
-      const d=await jsonPost('/api/execute',{source:sourceNow,mode:modeNow,filename:filenameNow,parameterValues}); state.lastDiagnostics=d.diagnostics||[];state.lastOutput=d.output||[]; sessionStorage.setItem('abapc-last-diagnostics',JSON.stringify(state.lastDiagnostics));sessionStorage.setItem('abapc-last-output',JSON.stringify(state.lastOutput));
-      renderGuiDiagnostics(state.lastDiagnostics); const lines=[`Status: ${d.ok?'OK':'FAILED'}`,...(d.output||[]),d.savedFile?`Archived: ${d.savedFile}`:'',d.stats?`Tokens: ${d.stats.tokens??0} · Time: ${d.stats.elapsedMs??0} ms · VM steps: ${d.runtime?.steps??0}`:''].filter(Boolean); showGuiOutput(d.ok?'ok':'err',lines.join('\n'));setStatus(d.ok?'Execution finished':'Execution failed');
-    } catch(e){state.lastDiagnostics=[{severity:'error',code:'IDE',message:String(e),start:{line:1,column:1}}];sessionStorage.setItem('abapc-last-diagnostics',JSON.stringify(state.lastDiagnostics));renderGuiDiagnostics(state.lastDiagnostics);showGuiOutput('err',String(e));setStatus('Execution failed');} finally {run.disabled=false;}
+
+      const parameterValues = {};
+      if (parameterSpecs?.length) {
+        const radioGroups = new Map();
+        for (const v of parameterSpecs) {
+          if (v.noDisplay) continue;
+          if (v.selectionOptions) {
+            const host = [...document.querySelectorAll('[data-range-host]')].find(x => x.dataset.rangeName?.toUpperCase() === String(v.name).toUpperCase());
+            if (!host) { parameterValues[v.name] = []; continue; }
+            const rows = [...host.querySelectorAll('[data-range-row]')].map(row => ({
+              sign: row.querySelector('[data-range-part="sign"]')?.value || 'I',
+              option: row.querySelector('[data-range-part="option"]')?.value || 'EQ',
+              low: row.querySelector('[data-range-part="low"]')?.value || '',
+              high: v.noIntervals ? '' : (row.querySelector('[data-range-part="high"]')?.value || '')
+            })).filter(row => row.low.trim() !== '' || row.high.trim() !== '');
+            if (v.obligatory && !rows.length) {
+              host.querySelector('[data-range-part="low"]')?.focus();
+              alert(`At least one range is required for ${v.name}.`);
+              setStatus(`Missing required selection ${v.name}`);
+              return;
+            }
+            parameterValues[v.name] = rows;
+            continue;
+          }
+          const el = [...document.querySelectorAll('[data-param-name]')].find(x => x.dataset.paramName?.toUpperCase() === String(v.name).toUpperCase());
+          if (!el) continue;
+          if (v.radiobuttonGroup) {
+            const group = String(v.radiobuttonGroup).toUpperCase();
+            if (!radioGroups.has(group)) radioGroups.set(group, []);
+            radioGroups.get(group).push({ v, el });
+            continue;
+          }
+          const value = el.type === 'checkbox' ? (el.checked ? 'X' : '') : el.value;
+          if (v.obligatory && String(value).trim() === '') {
+            el.focus();
+            alert(`Required parameter ${v.name} is empty.`);
+            setStatus(`Missing required parameter ${v.name}`);
+            return;
+          }
+          parameterValues[v.name] = value;
+        }
+        for (const [group, entries] of radioGroups) {
+          const chosen = entries.find(x => x.el.checked);
+          for (const entry of entries) parameterValues[entry.v.name] = chosen && chosen.v.name === entry.v.name ? 'X' : '';
+          if (entries.some(x => x.v.obligatory) && !chosen) {
+            entries[0]?.el.focus();
+            alert(`Choose one option in radio-button group ${group}.`);
+            setStatus(`Radio-button group ${group} requires a selection`);
+            return;
+          }
+        }
+      }
+
+      const dbUrl = getByodbUrl();
+      const d = await jsonPost('/api/run', {
+        code: sourceNow,
+        mode: modeNow,
+        filename: currentFile,
+        db_url: dbUrl.trim() || null,
+        parameterValues
+      });
+
+      lastDiagnosticsList = d.diagnostics || [];
+      lastOutputLines = d.output || [];
+      lastVariablesMap = d.variables || {};
+      $('output-diag-count').textContent = String(lastDiagnosticsList.length);
+
+      if (statusPill) {
+        statusPill.className = `output-metric-pill ${d.ok ? 'success' : 'failed'}`;
+        statusPill.textContent = d.ok ? 'SUCCESS (sy-subrc = 0)' : 'FAILED';
+      }
+
+      $('output-meta-time').textContent = `Time: ${d.runtime?.elapsed_ms ?? 0} ms`;
+      $('output-meta-steps').textContent = `Steps: ${d.runtime?.steps ?? 0}`;
+      $('output-meta-db').textContent = `DB: ${d.database_type || 'Local Mock'}`;
+
+      activeOutputTab = 'output';
+      document.querySelectorAll('[data-output-tab]').forEach(t => t.classList.toggle('active', t.dataset.outputTab === 'output'));
+      renderOutputView();
+
+      setStatus(d.ok ? `Execution finished (${d.runtime?.elapsed_ms ?? 0} ms)` : 'Execution failed');
+    } catch (e) {
+      if (statusPill) {
+        statusPill.className = 'output-metric-pill failed';
+        statusPill.textContent = 'RUN ERROR';
+      }
+      lastOutputLines = [`Execution error: ${String(e)}`];
+      activeOutputTab = 'output';
+      renderOutputView();
+      setStatus('Execution failed');
+    } finally {
+      runBtn.disabled = false;
+    }
+  });
+
+  // BYODB Settings Modal (Bring Your Own Database)
+  $('gui-byodb')?.addEventListener('click', () => {
+    openByodbModal();
+  });
+
+  // Draggable Horizontal Resizer (VFS Pane width)
+  const vfsPane = $('sap-vfs-pane');
+  const hResizer = $('sap-horizontal-resizer');
+  if (vfsPane && hResizer) {
+    const savedVfsWidth = localStorage.getItem('abapc_vfs_width');
+    if (savedVfsWidth) vfsPane.style.width = savedVfsWidth + 'px';
+    let isDraggingH = false;
+    let startX = 0;
+    let startW = 0;
+    hResizer.addEventListener('mousedown', (e) => {
+      isDraggingH = true;
+      startX = e.clientX;
+      startW = vfsPane.offsetWidth;
+      hResizer.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!isDraggingH) return;
+      const newW = Math.max(160, Math.min(500, startW + (e.clientX - startX)));
+      vfsPane.style.width = newW + 'px';
+      try { localStorage.setItem('abapc_vfs_width', newW); } catch {}
+    });
+    window.addEventListener('mouseup', () => {
+      if (isDraggingH) {
+        isDraggingH = false;
+        hResizer.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
+  }
+
+  // Draggable Vertical Resizer (Editor vs Output height)
+  const editorTop = $('sap-editor-top');
+  const outputBottom = $('sap-output-bottom');
+  const vResizer = $('sap-vertical-resizer');
+  if (editorTop && outputBottom && vResizer) {
+    const savedEditorH = localStorage.getItem('abapc_editor_height');
+    if (savedEditorH) {
+      editorTop.style.flex = 'none';
+      editorTop.style.height = savedEditorH + 'px';
+      outputBottom.style.flex = '1';
+    }
+    let isDraggingV = false;
+    let startY = 0;
+    let startH = 0;
+    vResizer.addEventListener('mousedown', (e) => {
+      isDraggingV = true;
+      startY = e.clientY;
+      startH = editorTop.offsetHeight;
+      vResizer.classList.add('dragging');
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!isDraggingV) return;
+      const newH = Math.max(140, Math.min(window.innerHeight - 180, startH + (e.clientY - startY)));
+      editorTop.style.flex = 'none';
+      editorTop.style.height = newH + 'px';
+      outputBottom.style.flex = '1';
+      try { localStorage.setItem('abapc_editor_height', newH); } catch {}
+    });
+    window.addEventListener('mouseup', () => {
+      if (isDraggingV) {
+        isDraggingV = false;
+        vResizer.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
+  }
+
+  // Draggable Parameters Resizer (Selection Screen height)
+  const paramsHost = $('gui-parameters');
+  const paramsResizer = $('sap-params-resizer');
+  if (paramsHost && paramsResizer) {
+    let isDraggingP = false;
+    let startYP = 0;
+    let startHP = 0;
+    paramsResizer.addEventListener('mousedown', (e) => {
+      isDraggingP = true;
+      startYP = e.clientY;
+      startHP = paramsHost.offsetHeight;
+      paramsResizer.classList.add('dragging');
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!isDraggingP) return;
+      const maxH = Math.max(160, Math.floor(window.innerHeight * 0.65));
+      const newH = Math.max(50, Math.min(maxH, startHP + (e.clientY - startYP)));
+      paramsHost.style.height = newH + 'px';
+      try { localStorage.setItem('abapc_params_height', newH); } catch {}
+    });
+    window.addEventListener('mouseup', () => {
+      if (isDraggingP) {
+        isDraggingP = false;
+        paramsResizer.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
+
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.target === paramsHost && paramsHost.style.display !== 'none' && !isDraggingP) {
+            const h = Math.round(entry.contentRect.height);
+            if (h > 40) {
+              try { localStorage.setItem('abapc_params_height', h); } catch {}
+            }
+          }
+        }
+      });
+      ro.observe(paramsHost);
+    }
+  }
+
+  // Collapsible VFS Pane
+  const btnVfsCollapse = $('btn-toggle-vfs-collapse');
+  const vfsRail = $('vfs-collapsed-rail');
+  const toggleVfs = (collapse) => {
+    if (!vfsPane) return;
+    const isCol = collapse !== undefined ? collapse : !vfsPane.classList.contains('collapsed');
+    vfsPane.classList.toggle('collapsed', isCol);
+    if (hResizer) hResizer.style.display = isCol ? 'none' : 'block';
+    if (vfsRail) vfsRail.style.display = isCol ? 'flex' : 'none';
+    try { localStorage.setItem('abapc_vfs_collapsed', isCol ? '1' : '0'); } catch {}
+  };
+  btnVfsCollapse?.addEventListener('click', (e) => { e.stopPropagation(); toggleVfs(true); });
+  vfsRail?.addEventListener('click', () => toggleVfs(false));
+  if (localStorage.getItem('abapc_vfs_collapsed') === '1') toggleVfs(true);
+
+  // Collapsible Output Console
+  const btnOutputCollapse = $('btn-toggle-output-collapse');
+  const toggleOutput = (collapse) => {
+    if (!outputBottom) return;
+    const isCol = collapse !== undefined ? collapse : !outputBottom.classList.contains('collapsed');
+    outputBottom.classList.toggle('collapsed', isCol);
+    if (btnOutputCollapse) btnOutputCollapse.textContent = isCol ? '▲ Output' : '▼ Output';
+    if (isCol) {
+      editorTop.style.flex = '1';
+      editorTop.style.height = 'auto';
+    } else {
+      const savedH = localStorage.getItem('abapc_editor_height');
+      if (savedH) {
+        editorTop.style.flex = 'none';
+        editorTop.style.height = savedH + 'px';
+        outputBottom.style.flex = '1';
+      }
+    }
+    try { localStorage.setItem('abapc_output_collapsed', isCol ? '1' : '0'); } catch {}
+  };
+  btnOutputCollapse?.addEventListener('click', () => toggleOutput());
+  if (localStorage.getItem('abapc_output_collapsed') === '1') toggleOutput(true);
+}
+
+function openByodbModal() {
+  const existing = document.getElementById('byodb-modal-overlay');
+  if (existing) existing.remove();
+
+  const currentUrl = getByodbUrl();
+  const overlay = document.createElement('div');
+  overlay.id = 'byodb-modal-overlay';
+  overlay.className = 'f4-overlay';
+  overlay.innerHTML = `
+    <div class="f4-dialog" style="width:min(580px, 96vw);">
+      <div class="f4-title">
+        <span>🗄 Bring Your Own Database (BYODB) · PostgreSQL</span>
+        <button id="byodb-close-btn" title="Close">✕</button>
+      </div>
+      <div style="font-size:12px;color:#334155;margin-bottom:12px;line-height:1.5;">
+        Connect your ephemeral ABAPC VM to a live PostgreSQL instance (e.g. Localhost, Supabase, or Neon).
+        When configured, Open SQL statements (<code style="background:#e2e8f0;padding:1px 4px;border-radius:3px;">SELECT ... FROM ...</code>) will query your live database.
+      </div>
+
+      <div style="margin-bottom:10px;">
+        <label for="byodb-input-url" style="display:block;font-size:11px;font-weight:bold;color:#1e293b;margin-bottom:4px;">
+          PostgreSQL Connection String
+        </label>
+        <div style="display:flex;gap:6px;">
+          <input type="text" id="byodb-input-url" value="${esc(currentUrl)}" placeholder="postgres://postgres:password@localhost:5432/postgres" style="flex:1;height:30px;padding:4px 8px;font-family:monospace;font-size:11px;border:1px solid #94a3b8;" />
+          <button class="secondary-btn" id="byodb-clear-btn" title="Clear and use Local Mock DB" style="font-size:11px;padding:2px 8px;">Clear</button>
+        </div>
+        <div style="font-size:10px;color:#64748b;margin-top:4px;">
+          Format: <code style="color:#0284c7;">postgres://username:password@host:port/database</code>
+        </div>
+      </div>
+
+      <div id="byodb-test-status" style="margin-bottom:12px;padding:8px 10px;border-radius:4px;font-size:11px;display:none;"></div>
+
+      <div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;padding:8px 10px;font-size:11px;color:#475569;margin-bottom:14px;line-height:1.4;">
+        <b>Localhost Troubleshooting Guide:</b>
+        <ul style="margin:4px 0 0 16px;padding:0;">
+          <li>If testing on <b>localhost:5432</b>, ensure your PostgreSQL Windows service is running (open <code>services.msc</code> &rarr; check <code>postgresql-x64-XX</code> status is <i>Running</i>).</li>
+          <li>If PostgreSQL is installed on a different port (e.g. <code>5433</code>), specify <code>localhost:5433</code>.</li>
+          <li>For instant cloud testing without local setup, you can paste a free connection string from <a href="https://neon.tech" target="_blank" style="color:#0284c7;text-decoration:underline;">Neon.tech</a> or <a href="https://supabase.com" target="_blank" style="color:#0284c7;text-decoration:underline;">Supabase</a>.</li>
+          <li>If the field is empty or connection fails, the compiler automatically uses the built-in deterministic Mock tables (<code>SCARR</code>, <code>SPFLI</code>, <code>SFLIGHT</code>, <code>ZPRODUCT</code>).</li>
+        </ul>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:8px;">
+        <button class="secondary-btn" id="byodb-test-btn" style="min-width:110px;">🔌 Test Connection</button>
+        <button class="primary-btn" id="byodb-save-btn" style="min-width:80px;">💾 Save</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  $('byodb-close-btn').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+
+  $('byodb-clear-btn').addEventListener('click', () => {
+    $('byodb-input-url').value = '';
+    localStorage.removeItem('abapc_byodb_url');
+    const statusBox = $('byodb-test-status');
+    statusBox.style.display = 'block';
+    statusBox.style.background = '#e0f2fe';
+    statusBox.style.color = '#0369a1';
+    statusBox.style.border = '1px solid #7dd3fc';
+    statusBox.textContent = 'Cleared. System will use the built-in Local Mock Database.';
+    showToast('Database URL cleared');
+  });
+
+  $('byodb-save-btn').addEventListener('click', () => {
+    const val = $('byodb-input-url').value.trim();
+    if (val) {
+      localStorage.setItem('abapc_byodb_url', val);
+      showToast('Database URL saved');
+    } else {
+      localStorage.removeItem('abapc_byodb_url');
+      showToast('Using Local Mock Database');
+    }
+    close();
+  });
+
+  $('byodb-test-btn').addEventListener('click', async () => {
+    const testBtn = $('byodb-test-btn');
+    const statusBox = $('byodb-test-status');
+    const url = $('byodb-input-url').value.trim();
+
+    if (!url) {
+      statusBox.style.display = 'block';
+      statusBox.style.background = '#fef3c7';
+      statusBox.style.color = '#92400e';
+      statusBox.style.border = '1px solid #fcd34d';
+      statusBox.textContent = 'No database URL entered. Local mock fixtures (SCARR, SPFLI, ZPRODUCT) are active.';
+      return;
+    }
+
+    testBtn.disabled = true;
+    testBtn.textContent = 'Testing…';
+    statusBox.style.display = 'block';
+    statusBox.style.background = '#f8fafc';
+    statusBox.style.color = '#475569';
+    statusBox.style.border = '1px solid #cbd5e1';
+    statusBox.textContent = 'Connecting to ' + url.replace(/:[^:@]+@/, ':****@') + '…';
+
+    try {
+      const resp = await jsonPost('/api/run', {
+        code: 'REPORT z_db_test. WRITE: / \'DB connection ping\'.',
+        db_url: url,
+        filename: 'z_db_test.abap'
+      });
+
+      if (resp.database_connected) {
+        statusBox.style.background = '#dcfce7';
+        statusBox.style.color = '#166534';
+        statusBox.style.border = '1px solid #86efac';
+        statusBox.innerHTML = `<b>✓ Connection Successful!</b><br>Engine: ${esc(resp.database_type || 'PostgreSQL (BYODB)')}. Open SQL queries will now execute against your database.`;
+        localStorage.setItem('abapc_byodb_url', url);
+      } else {
+        const diag = (resp.diagnostics || []).find(d => d.code === 'DB001');
+        const reason = diag ? diag.message : (resp.database_type || 'Connection failed');
+        statusBox.style.background = '#fee2e2';
+        statusBox.style.color = '#991b1b';
+        statusBox.style.border = '1px solid #fca5a5';
+        statusBox.innerHTML = `<b>✕ Connection Failed</b><br>${esc(reason)}<br><small style="margin-top:4px;display:block;">If testing localhost, make sure your PostgreSQL service is started and listening on the specified port.</small>`;
+      }
+    } catch (e) {
+      statusBox.style.background = '#fee2e2';
+      statusBox.style.color = '#991b1b';
+      statusBox.style.border = '1px solid #fca5a5';
+      statusBox.innerHTML = `<b>✕ Request Failed</b>: ${esc(e.message || String(e))}`;
+    } finally {
+      testBtn.disabled = false;
+      testBtn.textContent = '🔌 Test Connection';
+    }
   });
 }
 function showGuiOutput(type,text){const el=$('gui-output');if(!el)return;el.className='console';el.innerHTML=`<span class="${type}">${esc(text)}</span>`;}
@@ -341,8 +1701,82 @@ async function renderRapWorkbench(){
   $('rap-rollback').addEventListener('click',async()=>{try{const d=await jsonPost('/api/rap/rollback',{sessionId});$('rap-message').textContent=d.reported;await read();}catch(e){$('rap-message').textContent=e.message;}});
   await read();
 }
-async function renderObjectNavigator(){const names=state.examples.length?state.examples:await loadExamples();$('screen').innerHTML=`<div class="two-col"><div class="panel"><div class="panel-title">Local example programs</div><div class="panel-body"><p class="small-note">Open a supplied sample in the local ABAP editor. Example files are not SAP repository objects.</p><div class="object-list" id="object-list">${names.map(n=>`<button class="object-row" data-example="${esc(n)}"><span>▤</span><span>${esc(n)}</span><small>ABAP source</small></button>`).join('')||'<div class="empty-state">No examples found.</div>'}</div></div></div><div><div class="panel"><div class="panel-title">Workspace components</div><div class="panel-body"><div class="object-list"><div class="object-row">📁 <span>src/</span><small>compiler TypeScript</small></div><div class="object-row">📁 <span>dist/</span><small>compiled JS</small></div><div class="object-row">📁 <span>runtime/</span><small>local API manifest</small></div><div class="object-row">📁 <span>executed codes/</span><small>run archive</small></div><div class="object-row">📁 <span>docs/</span><small>specifications</small></div></div></div></div><div class="notice info">Object navigation is limited to files included in this local package; it does not activate, transport, or retrieve SAP repository objects.</div></div></div>`;
-  document.querySelectorAll('[data-example]').forEach(b=>b.addEventListener('click',()=>{state.editorPreset=b.dataset.example;state.editorFilename=b.dataset.example;goTo('SE38',false);setStatus(`Opened ${b.dataset.example} in editor`);}));
+async function renderObjectNavigator(){
+  const vfs = getVFSFiles();
+  const vfsKeys = Object.keys(vfs);
+  const names = state.examples.length ? state.examples : await loadExamples();
+  $('screen').innerHTML = `
+    <div class="two-col">
+      <div class="panel">
+        <div class="panel-title">
+          <span>Virtual File System Repository (SE80)</span>
+          <button class="secondary-btn small-btn" id="se80-new-vfs" title="Create a new program in the Virtual File System">+ New Program</button>
+        </div>
+        <div class="panel-body">
+          <p class="small-note">Shared client-side Virtual File System. Click any program to open it directly in SE38 ABAP Editor.</p>
+          <div class="object-list" id="vfs-object-list">
+            ${vfsKeys.map(n => {
+              const lines = (vfs[n] || '').split('\n').length;
+              const bytes = (vfs[n] || '').length;
+              return `<button class="object-row" data-vfs-file="${esc(n)}" title="Open ${esc(n)} in SE38">
+                <span>📄</span>
+                <span><b>${esc(n)}</b></span>
+                <small>${lines} lines · ${bytes} B</small>
+              </button>`;
+            }).join('') || '<div class="empty-state">No virtual programs found.</div>'}
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="panel">
+          <div class="panel-title">Built-in Sample Programs</div>
+          <div class="panel-body">
+            <p class="small-note">Supplied reference templates for ABAP Cloud and Standard syntax.</p>
+            <div class="object-list">
+              ${names.map(n => `<button class="object-row" data-example="${esc(n)}"><span>▤</span><span>${esc(n)}</span><small>Reference source</small></button>`).join('')}
+            </div>
+          </div>
+        </div>
+        <div class="notice info" style="margin-top:12px">All programs in the Virtual File System are persisted in your browser's localStorage and shared in real-time between ABAPC Studio and SAP GUI SE38/SE80.</div>
+      </div>
+    </div>`;
+
+  document.querySelectorAll('[data-vfs-file]').forEach(b => {
+    b.addEventListener('click', () => {
+      const file = b.dataset.vfsFile;
+      setActiveVFSFileName(file);
+      state.editorFilename = file;
+      goTo('SE38', false);
+      setStatus(`Opened VFS program ${file} in SE38`);
+    });
+  });
+
+  document.querySelectorAll('[data-example]').forEach(b => {
+    b.addEventListener('click', async () => {
+      try {
+        const d = await jsonGet('/api/example?name=' + encodeURIComponent(b.dataset.example));
+        state.pendingSource = d.source;
+        state.editorFilename = b.dataset.example;
+        goTo('SE38', false);
+        setStatus(`Opened sample ${b.dataset.example} in SE38`);
+      } catch (e) {
+        notice(e.message, 'error');
+      }
+    });
+  });
+
+  $('se80-new-vfs')?.addEventListener('click', () => {
+    let name = prompt('Enter new ABAP program name (e.g. Z_MY_REPORT.abap):');
+    if (!name || !name.trim()) return;
+    name = name.trim();
+    if (!name.endsWith('.abap')) name += '.abap';
+    const curVfs = getVFSFiles();
+    curVfs[name] = `REPORT ${name.replace('.abap', '').toUpperCase()}.\n\nWRITE: / 'Created in SE80 Object Navigator'.\n`;
+    saveVFSFiles(curVfs);
+    setActiveVFSFileName(name);
+    state.editorFilename = name;
+    goTo('SE38', false);
+  });
 }
 async function renderExecutionArchive(){
   $('screen').innerHTML='<div class="empty-state">Loading archived programs…</div>';
@@ -408,13 +1842,104 @@ $('go').addEventListener('click',()=>goTo($('command').value));$('command').addE
 document.querySelectorAll('.tree-node[data-tcode]').forEach(b=>b.addEventListener('click',()=>goTo(b.dataset.tcode)));
 $('back').addEventListener('click',()=>goTo(state.stack.pop()||'S000',false));$('exit').addEventListener('click',()=>goTo('S000'));$('refresh').addEventListener('click',()=>renderCurrent());$('open-studio').addEventListener('click',()=>location.href='/');
 $('cancel').addEventListener('click',()=>{if(state.current==='SE38'){notice('Editor remains open; use Back to leave without running.','info')}else goTo('S000');});
-$('save').addEventListener('click',()=>saveLocalDraft());$('print').addEventListener('click',()=>window.print());$('recent-toggle').addEventListener('click',()=>{if(!state.recent.length){showToast('No recent transactions yet.');return;}const selected=prompt('Recent transaction codes:\n'+state.recent.join('  ·  ')+'\n\nEnter a code to open it:');if(selected)goTo(selected)});
-$('tree-collapse').addEventListener('click',()=>{const tree=$('tree-scroll');const collapsed=tree.classList.toggle('tree-collapsed');$('tree-collapse').textContent=collapsed?'+':'−';});
-$('help-screen').addEventListener('click',()=>showToast(`Current screen: ${state.current}. Use the command field for a transaction code. This is a local training simulator.`));
-document.querySelectorAll('[data-menu]').forEach(b=>b.addEventListener('click',()=>{const m=b.dataset.menu;if(m==='Help')showToast('Help: F1-style guidance is local only. Use the ? button for screen help.');else if(m==='Favorites')goTo('S000');else if(m==='Edit')goTo('SE38');else if(m==='System')goTo('SE93');else if(m==='Environment')goTo('ZCERT');else goTo('S000');}));
-document.querySelectorAll('[data-app-command]').forEach(b=>b.addEventListener('click',()=>{const a=b.dataset.appCommand;if(a==='back'){goTo(state.stack.pop()||'S000',false);return;}if(a==='help'){showToast(`Help for ${state.current}: consult local practice notes or open ZCERT.`);return;}const runButton=document.getElementById('gui-run');const displayButton=document.getElementById('mock-display');if(runButton){runButton.click();return;}if(displayButton){displayButton.click();return;}showToast('No execute action is defined for this screen.');}));
-function showToast(text){const el=$('sap-message-toast');el.textContent=text;el.classList.add('visible');clearTimeout(window.__sapToastTimer);window.__sapToastTimer=setTimeout(()=>el.classList.remove('visible'),3000);setStatus(text);}
-function saveLocalDraft(){const source=$('gui-source');if(!source){showToast('No editor draft on this screen. Open SE38 first.');return;}try{const draft={source:source.value,filename:$('gui-filename')?.value||'program.abap',mode:$('gui-mode')?.value||'cloud',savedAt:new Date().toISOString()};localStorage.setItem('abapc-editor-draft',JSON.stringify(draft));showToast(`Draft saved locally: ${draft.filename}`)}catch{showToast('Could not save draft to this browser storage.')}}
-window.addEventListener('keydown',e=>{if(e.shiftKey&&e.key==='F3'){e.preventDefault();goTo('S000')}else if(e.key==='F3'){e.preventDefault();goTo(state.stack.pop()||'S000',false)}else if(e.key==='F12'){e.preventDefault();$('cancel').click()}else if(e.key==='F1'){e.preventDefault();$('help-screen').click()}else if(e.ctrlKey&&e.key.toLowerCase()==='s'){e.preventDefault();saveLocalDraft()}else if(e.ctrlKey&&e.key.toLowerCase()==='g'){e.preventDefault();$('command').focus();$('command').select()}});
-const chip=document.querySelector('.system-chip');if(chip){chip.style.cursor='pointer';chip.title='Click to configure Backend URL (Vercel / VPS)';chip.addEventListener('click',()=>{const cur=localStorage.getItem('ABAPC_API_BASE')||(window.API_BASE_URL||'');const next=prompt('Enter ABAPC Backend URL (e.g. https://your-vps.com:7345, or empty for same-origin):',cur);if(next!==null){if(next.trim()){localStorage.setItem('ABAPC_API_BASE',next.trim().replace(/\/$/,''));}else{localStorage.removeItem('ABAPC_API_BASE');}location.reload();}});}
-(async()=>{try{const c=await jsonGet('/api/config');$('clock').textContent=`${c.version||'local'} · INS`;}catch{$('clock').textContent='INS';}await loadExamples();renderRecentTree();goTo('S000',false);})();
+$('save').addEventListener('click', () => {
+  if (state.current === 'SE38') {
+    $('gui-vfs-save')?.click();
+  } else {
+    saveLocalDraft();
+  }
+});
+$('print').addEventListener('click', () => window.print());
+$('recent-toggle').addEventListener('click', () => {
+  if (!state.recent.length) { showToast('No recent transactions yet.'); return; }
+  const selected = prompt('Recent transaction codes:\n' + state.recent.join('  ·  ') + '\n\nEnter a code to open it:');
+  if (selected) goTo(selected);
+});
+
+// Collapsible SAP Easy Access Rail Logic
+const treePane = $('sap-tree-pane');
+const guiLayout = $('gui-layout');
+const treeCollapse = $('tree-collapse');
+const treeCollapsedRail = $('tree-collapsed-rail');
+
+function toggleTree(collapsed) {
+  if (!treePane || !guiLayout) return;
+  if (collapsed === undefined) {
+    collapsed = !treePane.classList.contains('collapsed');
+  }
+  treePane.classList.toggle('collapsed', collapsed);
+  guiLayout.classList.toggle('tree-collapsed', collapsed);
+  if (treeCollapse) treeCollapse.textContent = collapsed ? '▶' : '◀';
+  if (treeCollapsedRail) treeCollapsedRail.style.display = collapsed ? 'flex' : 'none';
+  try {
+    localStorage.setItem('abapc_easy_access_collapsed', collapsed ? '1' : '0');
+  } catch {}
+}
+
+if (treeCollapse) treeCollapse.addEventListener('click', (e) => { e.stopPropagation(); toggleTree(); });
+if (treeCollapsedRail) treeCollapsedRail.addEventListener('click', () => toggleTree(false));
+
+const initialTreeCollapsed = localStorage.getItem('abapc_easy_access_collapsed') === '1';
+if (initialTreeCollapsed) toggleTree(true);
+
+$('open-editor')?.addEventListener('click', () => goTo('SE38'));
+$('help-screen').addEventListener('click', () => showToast(`Current screen: ${state.current}. Use the command field for a transaction code. This is a local training simulator.`));
+document.querySelectorAll('[data-menu]').forEach(b => b.addEventListener('click', () => {
+  const m = b.dataset.menu;
+  if (m === 'Help') showToast('Help: F1-style guidance is local only. Use the ? button for screen help.');
+  else if (m === 'Favorites') goTo('S000');
+  else if (m === 'Edit') goTo('SE38');
+  else if (m === 'System') goTo('SE93');
+  else if (m === 'Environment') goTo('ZCERT');
+  else goTo('S000');
+}));
+document.querySelectorAll('[data-app-command]').forEach(b => b.addEventListener('click', () => {
+  const a = b.dataset.appCommand;
+  if (a === 'back') { goTo(state.stack.pop() || 'S000', false); return; }
+  if (a === 'help') { showToast(`Help for ${state.current}: consult local practice notes or open ZCERT.`); return; }
+  const runButton = document.getElementById('gui-run');
+  const displayButton = document.getElementById('mock-display');
+  if (runButton) { runButton.click(); return; }
+  if (displayButton) { displayButton.click(); return; }
+  showToast('No execute action is defined for this screen.');
+}));
+function showToast(text) {
+  const el = $('sap-message-toast');
+  el.textContent = text;
+  el.classList.add('visible');
+  clearTimeout(window.__sapToastTimer);
+  window.__sapToastTimer = setTimeout(() => el.classList.remove('visible'), 3000);
+  setStatus(text);
+}
+function saveLocalDraft() {
+  const source = $('gui-source');
+  if (!source) { showToast('No editor draft on this screen. Open SE38 first.'); return; }
+  try {
+    const draft = { source: source.value, filename: $('gui-filename')?.value || 'program.abap', mode: $('gui-mode')?.value || 'cloud', savedAt: new Date().toISOString() };
+    localStorage.setItem('abapc-editor-draft', JSON.stringify(draft));
+    showToast(`Draft saved locally: ${draft.filename}`);
+  } catch {
+    showToast('Could not save draft to this browser storage.');
+  }
+}
+window.addEventListener('keydown', e => {
+  if (e.shiftKey && e.key === 'F3') { e.preventDefault(); goTo('S000'); }
+  else if (e.key === 'F3') { e.preventDefault(); goTo(state.stack.pop() || 'S000', false); }
+  else if (e.key === 'F12') { e.preventDefault(); $('cancel').click(); }
+  else if (e.key === 'F1') { e.preventDefault(); $('help-screen').click(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); $('save').click(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') { e.preventDefault(); $('command').focus(); $('command').select(); }
+});
+(async () => {
+  try {
+    const c = await jsonGet('/api/config');
+    $('clock').textContent = `${c.version || 'local'} · INS`;
+  } catch {
+    $('clock').textContent = 'INS';
+  }
+  await loadExamples();
+  renderRecentTree();
+  const urlParams = new URLSearchParams(window.location.search);
+  const startTx = urlParams.get('tx') || (window.location.hash ? window.location.hash.replace('#', '') : 'SE38');
+  goTo(startTx, false);
+})();

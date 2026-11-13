@@ -4,7 +4,7 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 static COMPOUND_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?i)(SELECT-OPTIONS|NO-INTERVALS|NO-EXTENSION|NO-GAPS|SELECTION-SCREEN|START-OF-SELECTION|END-OF-SELECTION|VALUE-REQUEST|HELP-REQUEST|USER-COMMAND|NO-DISPLAY|READ-ONLY|CLASS-DATA|CLASS-METHODS)(?:\s|[:,.]|$)").unwrap()
+    Regex::new(r"^(?i)(SELECT-OPTIONS|NO-INTERVALS|NO-EXTENSION|NO-GAPS|SELECTION-SCREEN|START-OF-SELECTION|END-OF-SELECTION|VALUE-REQUEST|HELP-REQUEST|USER-COMMAND|NO-DISPLAY|READ-ONLY|CLASS-DATA|CLASS-METHODS|FIELD-SYMBOLS|FIELD-SYMBOL)(?:\s|[:,.]|$)").unwrap()
 });
 
 pub struct Lexer {
@@ -107,6 +107,31 @@ impl Lexer {
 
                 let end = Position { line, column, offset: i };
                 let upper = s.to_ascii_uppercase();
+
+                // Explicit 2-character ABAP comparison operators
+                let comp_op = match upper.as_str() {
+                    "CP" => Some(TokenKind::CP),
+                    "NP" => Some(TokenKind::NP),
+                    "CS" => Some(TokenKind::CS),
+                    "NS" => Some(TokenKind::NS),
+                    "CA" => Some(TokenKind::CA),
+                    "NA" => Some(TokenKind::NA),
+                    "CO" => Some(TokenKind::CO),
+                    "CN" => Some(TokenKind::CN),
+                    "EQ" => Some(TokenKind::EQ),
+                    "NE" => Some(TokenKind::NE),
+                    "LT" => Some(TokenKind::LT),
+                    "GT" => Some(TokenKind::GT),
+                    "LE" => Some(TokenKind::LE),
+                    "GE" => Some(TokenKind::GE),
+                    _ => None,
+                };
+
+                if let Some(kind) = comp_op {
+                    tokens.push(Token::new(kind, s, start, end));
+                    continue;
+                }
+
                 let is_kw = KEYWORDS.contains(upper.as_str());
                 tokens.push(Token::new(if is_kw { TokenKind::Keyword } else { TokenKind::Identifier }, s, start, end));
                 continue;
@@ -188,7 +213,59 @@ impl Lexer {
                 if !closed {
                     self.diagnostics.error("LEX001", "Unterminated string literal.", start, end);
                 }
-                tokens.push(Token::new(TokenKind::String, val, start, end));
+                tokens.push(Token::new(TokenKind::StringLiteral, val, start, end));
+                continue;
+            }
+
+            // String objects with backticks `...` and `` escape
+            if ch == '`' {
+                i += 1;
+                column += 1;
+                let mut val = String::new();
+                let mut closed = false;
+
+                while i < len {
+                    if self.source[i] == '`' {
+                        if i + 1 < len && self.source[i + 1] == '`' {
+                            val.push('`');
+                            i += 2;
+                            column += 2;
+                            continue;
+                        }
+                        i += 1;
+                        column += 1;
+                        closed = true;
+                        break;
+                    }
+                    if self.source[i] == '\\' && i + 1 < len {
+                        if self.source[i + 1] == '`' {
+                            val.push('`');
+                            i += 2;
+                            column += 2;
+                            continue;
+                        } else if self.source[i + 1] == '\\' {
+                            val.push('\\');
+                            i += 2;
+                            column += 2;
+                            continue;
+                        }
+                    }
+                    if self.source[i] == '\n' {
+                        line += 1;
+                        column = 1;
+                    } else {
+                        column += 1;
+                    }
+                    val.push(self.source[i]);
+                    i += 1;
+                }
+
+                line_start = false;
+                let end = Position { line, column, offset: i };
+                if !closed {
+                    self.diagnostics.error("LEX001", "Unterminated string object.", start, end);
+                }
+                tokens.push(Token::new(TokenKind::StringObject, val, start, end));
                 continue;
             }
 
@@ -260,6 +337,26 @@ impl Lexer {
                 line_start = false;
                 tokens.push(Token::new(TokenKind::Operator, two, start, Position { line, column, offset: i }));
                 continue;
+            }
+
+            // Field symbols: <fs_name>
+            if ch == '<' {
+                let mut j = i + 1;
+                while j < len && (self.source[j].is_ascii_alphanumeric() || self.source[j] == '_') {
+                    j += 1;
+                }
+                if j > i + 1 && j < len && self.source[j] == '>' {
+                    let word_len = j - i + 1;
+                    let word: String = self.source[i..=j].iter().collect();
+                    for _ in 0..word_len {
+                        i += 1;
+                        column += 1;
+                    }
+                    line_start = false;
+                    let end = Position { line, column, offset: i };
+                    tokens.push(Token::new(TokenKind::Identifier, word, start, end));
+                    continue;
+                }
             }
 
             // Single character symbols

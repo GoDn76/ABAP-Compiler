@@ -175,6 +175,41 @@ pub struct QueryCdsResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct RunRequest {
+    #[serde(alias = "source", default)]
+    pub code: String,
+    #[serde(rename = "db_url", default)]
+    pub db_url: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(rename = "maxSteps", default)]
+    pub max_steps: Option<usize>,
+    #[serde(rename = "parameterValues", default)]
+    pub parameter_values: Option<HashMap<String, Value>>,
+    #[serde(default)]
+    pub filename: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RunResponse {
+    pub ok: bool,
+    pub mode: String,
+    pub output: Vec<String>,
+    pub diagnostics: Vec<Diagnostic>,
+    #[serde(rename = "diagnosticText")]
+    pub diagnostic_text: Vec<String>,
+    pub variables: HashMap<String, Value>,
+    pub ir: Option<ProgramIR>,
+    pub stats: CompileStats,
+    pub runtime: Option<RuntimeStats>,
+    #[serde(rename = "databaseConnected")]
+    pub database_connected: bool,
+    #[serde(rename = "databaseType")]
+    pub database_type: String,
+    pub ephemeral: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RapReadRequest {
     #[serde(default = "default_entity")]
     pub entity: String,

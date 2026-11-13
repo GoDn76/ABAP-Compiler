@@ -1,4 +1,4 @@
-use super::ast::{ClassAttributeDecl, MethodDecl, Program, TypeDecl};
+use super::ast::{ClassAttributeDecl, MethodDecl, Program, TypeDecl, Visibility};
 use super::diagnostics::Position;
 use std::collections::{HashMap, HashSet};
 
@@ -129,6 +129,56 @@ pub fn build_class_models(program: &Program) -> HashMap<String, ClassModel> {
         }
     }
 
+    // Inherit interface method signatures into implementing classes
+    for model in classes.values_mut() {
+        for iface_name in &model.interfaces {
+            if let Some(iface) = program.interfaces.iter().find(|i| i.name.eq_ignore_ascii_case(iface_name)) {
+                for im in &iface.methods {
+                    let full_name = format!("{}~{}", iface.name, im.name).to_ascii_uppercase();
+                    let bare_name = im.name.to_ascii_uppercase();
+
+                    let synthetic_decl = MethodDecl {
+                        start: im.start,
+                        end: im.end,
+                        name: im.name.clone(),
+                        statements: Vec::new(),
+                        params: im.importing.clone(),
+                        returning: im.returning.clone(),
+                        implemented: Some(false),
+                        is_static: Some(im.is_static),
+                        visibility: Some(Visibility::Public),
+                        is_abstract: Some(false),
+                        is_final: Some(false),
+                        redefinition: Some(false),
+                    };
+
+                    for key in [&full_name, &bare_name] {
+                        if let Some(existing) = model.methods.get_mut(key) {
+                            if existing.params.is_empty() {
+                                existing.params = synthetic_decl.params.clone();
+                            }
+                            if existing.returning.is_none() {
+                                existing.returning = synthetic_decl.returning.clone();
+                            }
+                            if existing.is_static.is_none() {
+                                existing.is_static = synthetic_decl.is_static;
+                            }
+                            if existing.visibility.is_none() {
+                                existing.visibility = Some(Visibility::Public);
+                            }
+                        } else {
+                            let mut decl = synthetic_decl.clone();
+                            if key == &full_name {
+                                decl.name = format!("{}~{}", iface.name, im.name);
+                            }
+                            model.methods.insert(key.clone(), decl);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     classes
 }
 
@@ -164,6 +214,18 @@ pub fn resolve_method(
     for model in class_lineage(models, class_name) {
         if let Some(method) = model.methods.get(&m_upper).cloned() {
             return Some((model, method));
+        }
+        if let Some(idx) = m_upper.rfind('~') {
+            let bare = &m_upper[idx + 1..];
+            if let Some(method) = model.methods.get(bare).cloned() {
+                return Some((model.clone(), method));
+            }
+        } else {
+            for (k, method) in &model.methods {
+                if k.ends_with(&format!("~{}", m_upper)) {
+                    return Some((model.clone(), method.clone()));
+                }
+            }
         }
     }
     None

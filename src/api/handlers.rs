@@ -4,7 +4,7 @@ use crate::compiler::ir::RequestedEvent;
 use crate::compiler::policy::{LanguageMode, ReleasedApiManifest};
 use crate::compiler::{compile_source, CompileOptions};
 use crate::config::AppConfig;
-use crate::db::{PostgresClient, RedisSessionStore};
+use crate::db::{IpRateLimiter, PostgresClient, RedisSessionStore};
 use crate::error::AppError;
 use crate::platform::LocalPlatform;
 use axum::{
@@ -15,8 +15,9 @@ use axum::{
 use chrono::Local;
 use regex::Regex;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::fs;
 use tokio::sync::RwLock;
 
@@ -26,6 +27,41 @@ pub struct AppState {
     pub platform: Arc<RwLock<LocalPlatform>>,
     pub redis: RedisSessionStore,
     pub postgres: PostgresClient,
+    pub rate_limiter: IpRateLimiter,
+}
+
+pub struct AutoCleanFile {
+    pub path: PathBuf,
+}
+
+impl AutoCleanFile {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl Drop for AutoCleanFile {
+    fn drop(&mut self) {
+        if self.path.exists() {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn extract_client_ip(headers: &axum::http::HeaderMap) -> String {
+    if let Some(forwarded) = headers.get("x-forwarded-for") {
+        if let Ok(s) = forwarded.to_str() {
+            if let Some(ip) = s.split(',').next() {
+                return ip.trim().to_string();
+            }
+        }
+    }
+    if let Some(real_ip) = headers.get("x-real-ip") {
+        if let Ok(s) = real_ip.to_str() {
+            return s.trim().to_string();
+        }
+    }
+    "127.0.0.1".to_string()
 }
 
 impl AppState {
@@ -196,6 +232,8 @@ pub async fn compile_handler(
             preview_selection: false,
             selection_event: None,
             external_types: ext_types,
+            filename: payload.filename,
+            database: None,
         },
     );
     Ok(Json(result))
@@ -221,12 +259,10 @@ pub async fn execute_handler(
     };
 
     let saved_name = format!("{}_{}_{}", current_timestamp(), mode_str, final_name);
-    let exec_dir = Path::new(&state.config.executed_dir);
-    let _ = fs::create_dir_all(exec_dir).await;
-    let saved_path = exec_dir.join(&saved_name);
-    let _ = fs::write(&saved_path, &source).await;
-
-    let relative_path = format!("executed codes/{}", saved_name);
+    let temp_path = std::env::temp_dir().join(&saved_name);
+    let _ = fs::write(&temp_path, &source).await;
+    let _file_guard = AutoCleanFile::new(temp_path);
+    let relative_path = "ephemeral://memory".to_string();
 
     let manifest = read_manifest(&state.config.manifest_path).await;
     let mode = if mode_str == "cloud" {
@@ -256,6 +292,8 @@ pub async fn execute_handler(
             preview_selection: false,
             selection_event: None,
             external_types: ext_types,
+            filename: Some(final_name),
+            database: None,
         },
     );
 
@@ -286,6 +324,153 @@ pub async fn execute_handler(
     }))
 }
 
+pub async fn run_handler(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<RunRequest>,
+) -> Result<Json<RunResponse>, AppError> {
+    let client_ip = extract_client_ip(&headers);
+
+    // 1. Redis-backed Rate Limiter
+    if let Err(retry_after) = state.rate_limiter.check_rate_limit(&client_ip).await {
+        return Err(AppError::TooManyRequests {
+            message: format!(
+                "Rate limit exceeded for IP {}. Maximum {} execution requests per {}s allowed.",
+                client_ip,
+                state.rate_limiter.max_requests,
+                state.rate_limiter.window_secs
+            ),
+            retry_after,
+        });
+    }
+
+    // 2. Strict Ephemeral AutoCleanFile (guaranteed immediate drop deletion)
+    let temp_name = format!(
+        "abap_ephemeral_{}_{}.abap",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
+    let temp_path = std::env::temp_dir().join(&temp_name);
+    let _ = fs::write(&temp_path, &payload.code).await;
+    let _file_guard = AutoCleanFile::new(temp_path);
+
+    // 3. 5-second Execution Timeout Middleware / Task Wrapper
+    let code = payload.code.clone();
+    let payload_filename = payload.filename.clone();
+    let mode_str = payload.mode.unwrap_or_else(|| "standard".to_string());
+    let mode_for_task = mode_str.clone();
+    let db_url = payload.db_url.clone();
+    let max_steps = payload.max_steps.map(|s| s.clamp(1_000, 10_000_000)).unwrap_or(2_000_000);
+    let param_values = payload.parameter_values.unwrap_or_default();
+    let manifest = read_manifest(&state.config.manifest_path).await;
+    let ext_types = {
+        let p = state.platform.read().await;
+        p.get_compiler_types()
+    };
+
+    let exec_task = async move {
+        let mode = if mode_for_task == "cloud" {
+            LanguageMode::Cloud
+        } else {
+            LanguageMode::Standard
+        };
+
+        let mut db_type = "Local Mock Database".to_string();
+        let mut db_connected = false;
+        let mut live_db = None;
+        let mut db_error_msg = None;
+
+        if let Some(ref url) = db_url {
+            let trimmed = url.trim();
+            if !trimmed.is_empty() {
+                match state.postgres.execute_scoped_query(trimmed, "SELECT 1").await {
+                    Ok(_) => {
+                        db_connected = true;
+                        db_type = "PostgreSQL (BYODB)".to_string();
+                        // Attempt to load tables from public schema
+                        let mut tables_map = state
+                            .postgres
+                            .fetch_all_public_tables(trimmed)
+                            .await
+                            .unwrap_or_default();
+                        // Merge with default mock tables so standard tables (SCARR, SPFLI, etc.) remain queryable
+                        let default_db = crate::compiler::vm::default_vm_database();
+                        for (k, v) in default_db {
+                            tables_map.entry(k).or_insert(v);
+                        }
+                        live_db = Some(tables_map);
+                    }
+                    Err(e) => {
+                        db_connected = false;
+                        db_type = format!("Local Mock (Fallback: {})", e);
+                        db_error_msg = Some(e);
+                    }
+                }
+            }
+        }
+
+        let mut result = compile_source(
+            &code,
+            CompileOptions {
+                mode: Some(mode),
+                released_apis: Some(manifest),
+                run: true,
+                max_steps,
+                parameter_values: param_values,
+                preview_selection: false,
+                selection_event: None,
+                external_types: ext_types,
+                filename: payload_filename,
+                database: live_db,
+            },
+        );
+
+        if let Some(err) = db_error_msg {
+            result.diagnostics.push(crate::compiler::diagnostics::Diagnostic {
+                severity: crate::compiler::diagnostics::Severity::Warning,
+                code: "DB001".to_string(),
+                message: format!("Could not connect to PostgreSQL: {}. Using Local Mock Database.", err),
+                start: crate::compiler::diagnostics::Position { line: 1, column: 1, offset: 0 },
+                end: crate::compiler::diagnostics::Position { line: 1, column: 1, offset: 0 },
+            });
+        }
+
+        (result, db_connected, db_type)
+    };
+
+    let (result, db_connected, db_type) = match tokio::time::timeout(Duration::from_secs(5), exec_task).await {
+        Ok(res) => res,
+        Err(_) => {
+            return Err(AppError::Timeout(
+                "Execution timed out (5s limit exceeded); possible infinite loop in ABAP program.".to_string(),
+            ));
+        }
+    };
+
+    let d_text = result.diagnostics.iter().map(format_diagnostic).collect();
+    let runtime = result.vm.as_ref().map(|vm| RuntimeStats {
+        steps: vm.steps,
+        elapsed_ms: vm.elapsed_ms,
+        selected_rows: vm.selected_rows,
+    });
+
+    // Note: _file_guard is dropped here, deleting the ephemeral temp file immediately
+    Ok(Json(RunResponse {
+        ok: result.stats.errors == 0,
+        mode: mode_str,
+        output: result.vm.as_ref().map(|v| v.output.clone()).unwrap_or_default(),
+        diagnostics: result.diagnostics,
+        diagnostic_text: d_text,
+        variables: result.vm.as_ref().map(|v| v.variables.clone()).unwrap_or_default(),
+        ir: result.ir,
+        stats: result.stats,
+        runtime,
+        database_connected: db_connected,
+        database_type: db_type,
+        ephemeral: true,
+    }))
+}
+
 pub async fn selection_preview_handler(
     State(state): State<AppState>,
     Json(payload): Json<CompilePayloadRequest>,
@@ -313,6 +498,8 @@ pub async fn selection_preview_handler(
             preview_selection: true,
             selection_event: None,
             external_types: ext_types,
+            filename: payload.filename,
+            database: None,
         },
     );
 
@@ -370,6 +557,8 @@ pub async fn selection_event_handler(
                 target: if !target.is_empty() { Some(target) } else { None },
             }),
             external_types: ext_types,
+            filename: payload.filename,
+            database: None,
         },
     );
 

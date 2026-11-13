@@ -1,6 +1,6 @@
 use abapc_studio::api::handlers::AppState;
 use abapc_studio::config::AppConfig;
-use abapc_studio::db::{PostgresClient, RedisSessionStore};
+use abapc_studio::db::{IpRateLimiter, PostgresClient, RedisSessionStore};
 use abapc_studio::platform::LocalPlatform;
 use abapc_studio::server::create_router;
 use std::process::Command;
@@ -30,12 +30,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shared_platform = Arc::new(RwLock::new(platform));
     let redis_store = RedisSessionStore::new(config.redis_url.clone());
     let postgres_client = PostgresClient::new(config.database_url.clone());
+    let rate_limiter = IpRateLimiter::new(
+        config.redis_url.clone(),
+        config.rate_limit_max,
+        config.rate_limit_window_secs,
+    );
 
     let state = AppState {
         config: config.clone(),
         platform: shared_platform,
         redis: redis_store,
         postgres: postgres_client,
+        rate_limiter,
     };
 
     let router = create_router(state);

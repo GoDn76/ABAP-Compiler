@@ -2,13 +2,16 @@ use super::diagnostics::Position;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
+#[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenKind {
     Identifier,
     Integer,
     Decimal,
-    String,
+    StringLiteral,
+    StringObject,
     StringTemplate,
+    String,
     Keyword,
     Operator,
     Dot,
@@ -23,6 +26,44 @@ pub enum TokenKind {
     Hash,
     Tilde,
     EOF,
+
+    // ABAP 2-character Comparison Operators
+    CP,
+    NP,
+    CS,
+    NS,
+    CA,
+    NA,
+    CO,
+    CN,
+    EQ,
+    NE,
+    LT,
+    GT,
+    LE,
+    GE,
+}
+
+impl TokenKind {
+    pub fn is_comparison_operator(&self) -> bool {
+        matches!(
+            self,
+            TokenKind::CP
+                | TokenKind::NP
+                | TokenKind::CS
+                | TokenKind::NS
+                | TokenKind::CA
+                | TokenKind::NA
+                | TokenKind::CO
+                | TokenKind::CN
+                | TokenKind::EQ
+                | TokenKind::NE
+                | TokenKind::LT
+                | TokenKind::GT
+                | TokenKind::LE
+                | TokenKind::GE
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,7 +106,7 @@ pub static KEYWORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "NO-DISPLAY","OBLIGATORY","AS","CHECKBOX","STATICS","CONSTANTS","TYPE","TYPES","VALUE","LIKE","REF","TO","OF",
         "TABLE","SORTED","HASHED","STANDARD","WITH","EMPTY","KEY","UNIQUE",
         "BEGIN","END","IF","ELSEIF","ELSE","ENDIF","WHILE","ENDWHILE","DO","TIMES","ENDDO","WHEN","OTHERS","ENDCASE",
-        "LOOP","ENDLOOP","INTO","ASSIGNING","FIELD-SYMBOL",
+        "LOOP","ENDLOOP","INTO","ASSIGNING","FIELD-SYMBOL","FIELD-SYMBOLS","ASSIGN","ASSIGNED",
         "APPEND","INSERT","READ","TRANSLATE","UPPER","CONCATENATE","SEPARATED","RESPECTING","BLANKS","SPLIT","CONDENSE",
         "USING","OPTIONS","FOR","INDEX","DELETE","SORT","ASCENDING","DESCENDING","DESCRIBE","LINES","CLEAR","CHECK",
         "CONTINUE","EXIT","RETURN","ASSERT","WRITE","SKIP",

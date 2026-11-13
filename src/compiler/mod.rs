@@ -57,6 +57,31 @@ pub struct CompileOptions {
     pub preview_selection: bool,
     pub selection_event: Option<RequestedEvent>,
     pub external_types: HashMap<String, TypeRef>,
+    pub filename: Option<String>,
+    pub database: Option<HashMap<String, Vec<serde_json::Value>>>,
+}
+
+fn extract_program_stem(filename: &str) -> String {
+    let path = std::path::Path::new(filename);
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or(filename);
+    let without_abap = if let Some(s) = file_name.strip_suffix(".abap") {
+        s
+    } else if let Some(s) = file_name.strip_suffix(".prog.abap") {
+        s
+    } else {
+        file_name
+    };
+    without_abap.to_string()
+}
+
+fn is_ephemeral_or_generic(stem: &str) -> bool {
+    let lower = stem.to_ascii_lowercase();
+    lower.starts_with("abap_ephemeral_")
+        || lower.ends_with("_standard_program")
+        || lower == "standard_program"
+        || lower == "temp"
+        || lower == "program"
+        || lower == "z_db_ping"
 }
 
 pub fn compile_source(source: &str, options: CompileOptions) -> CompileResult {
@@ -86,6 +111,31 @@ pub fn compile_source(source: &str, options: CompileOptions) -> CompileResult {
         diagnostics.extend(parse_diags);
 
         if !diagnostics.has_errors() {
+            // Validate Report Name vs Program/File Name (Standard ABAP rule)
+            if let Some(ref rep_name) = program.report_name {
+                if let Some(ref fname) = options.filename {
+                    let clean_stem = extract_program_stem(fname);
+                    if !is_ephemeral_or_generic(&clean_stem) {
+                        if rep_name.to_ascii_uppercase() != clean_stem.to_ascii_uppercase() {
+                            let span = program.report_span.unwrap_or((
+                                diagnostics::Position { line: 1, column: 1, offset: 0 },
+                                diagnostics::Position { line: 1, column: 1, offset: 0 },
+                            ));
+                            diagnostics.error(
+                                "REP001",
+                                format!(
+                                    "Report name '{}' does not match program name '{}'.",
+                                    rep_name.to_ascii_uppercase(),
+                                    clean_stem.to_ascii_uppercase()
+                                ),
+                                span.0,
+                                span.1,
+                            );
+                        }
+                    }
+                }
+            }
+
             let policy = CompilerPolicy {
                 mode,
                 released_apis: manifest,
@@ -127,7 +177,11 @@ pub fn compile_source(source: &str, options: CompileOptions) -> CompileResult {
                 }
 
                 let max_steps = if options.max_steps > 0 { options.max_steps } else { 2_000_000 };
-                let mut vm = VM::new();
+                let mut vm = if let Some(custom_db) = options.database {
+                    VM::with_database(custom_db)
+                } else {
+                    VM::new()
+                };
                 let vm_res = vm.execute(
                     &ir,
                     max_steps,
@@ -532,5 +586,395 @@ WRITE / 'Line 3' / 'Line 4'.
         assert!(res.ok, "Write flex test failed: {:?}", res.diagnostics);
         let vm = res.vm.expect("VM result should be present");
         assert_eq!(vm.output, vec!["Item 1 Alpha", "Item 2 Beta", "Line 3", "Line 4"]);
+    }
+
+    #[test]
+    fn test_crazy_oo_pointer_test() {
+        let source = r#"
+REPORT z_crazy_oo_pointer_test.
+
+CLASS lcl_math DEFINITION.
+  PUBLIC SECTION.
+    CLASS-METHODS: divide IMPORTING iv_num1 TYPE i iv_num2 TYPE i
+                          RETURNING VALUE(rv_result) TYPE i.
+ENDCLASS.
+
+CLASS lcl_math IMPLEMENTATION.
+  METHOD divide.
+    TRY.
+        rv_result = iv_num1 / iv_num2.
+      CATCH cx_sy_zerodivide.
+        rv_result = -1.
+    ENDTRY.
+  ENDMETHOD.
+ENDCLASS.
+
+DATA: lv_dynamic_var TYPE string VALUE 'RUST_IS_FAST'.
+FIELD-SYMBOLS: <fs_value> TYPE any.
+
+ASSIGN lv_dynamic_var TO <fs_value>.
+IF <fs_value> IS ASSIGNED.
+  <fs_value> = |{ <fs_value> }_AND_SAFE|. 
+ENDIF.
+
+TYPES: BEGIN OF ty_player,
+         id    TYPE i,
+         name  TYPE string,
+         score TYPE i,
+       END OF ty_player.
+
+DATA: lt_players TYPE TABLE OF ty_player,
+      ls_player  TYPE ty_player.
+
+ls_player-id = 1. ls_player-name = 'Gaurav'. ls_player-score = 150. APPEND ls_player TO lt_players.
+ls_player-id = 2. ls_player-name = 'RustVM'. ls_player-score = 999. APPEND ls_player TO lt_players.
+ls_player-id = 3. ls_player-name = 'BugHunter'. ls_player-score = 50. APPEND ls_player TO lt_players.
+
+FIELD-SYMBOLS: <fs_player> TYPE ty_player.
+
+READ TABLE lt_players ASSIGNING <fs_player> WITH KEY name = 'RustVM'.
+IF <fs_player> IS ASSIGNED.
+  <fs_player>-score = 0.
+ENDIF.
+
+DATA: lv_total_score TYPE i VALUE 0.
+
+LOOP AT lt_players INTO ls_player WHERE score > 0.
+  lv_total_score = lv_total_score + ls_player-score.
+  WRITE: / 'Player:', ls_player-name, 'Score:', ls_player-score.
+ENDLOOP.
+
+DATA(lv_div_valid) = lcl_math=>divide( iv_num1 = 10 iv_num2 = 2 ).
+DATA(lv_div_zero)  = lcl_math=>divide( iv_num1 = 10 iv_num2 = 0 ).
+
+WRITE: / '--- TEST RESULTS ---'.
+WRITE: / 'Dynamic Pointer Result:', lv_dynamic_var.
+WRITE: / 'Total Score (Expected 200):', lv_total_score.
+WRITE: / 'Valid Division (Expected 5):', lv_div_valid.
+WRITE: / 'Zero Division Handled (Expected -1):', lv_div_zero.
+"#;
+        let mut options = CompileOptions::default();
+        options.run = true;
+        options.mode = Some(LanguageMode::Standard);
+
+        let res = compile_source(source, options);
+        assert!(res.ok, "Crazy OO pointer test compilation failed: {:?}", res.diagnostics);
+        let vm = res.vm.expect("VM result should be present");
+        assert_eq!(
+            vm.output,
+            vec![
+                "Player: Gaurav Score: 150",
+                "Player: BugHunter Score: 50",
+                "--- TEST RESULTS ---",
+                "Dynamic Pointer Result: RUST_IS_FAST_AND_SAFE",
+                "Total Score (Expected 200): 200",
+                "Valid Division (Expected 5): 5",
+                "Zero Division Handled (Expected -1): -1",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_report_name_mismatch_error() {
+        let source = "REPORT z_wrong_name.\nWRITE: / 'Test'.";
+        let mut options = CompileOptions::default();
+        options.filename = Some("z_stateless_main.abap".to_string());
+        options.mode = Some(LanguageMode::Standard);
+
+        let res = compile_source(source, options);
+        assert!(!res.ok, "Should fail due to report name mismatch");
+        assert!(res.diagnostics.iter().any(|d| d.code == "REP001"));
+        let diag = res.diagnostics.iter().find(|d| d.code == "REP001").unwrap();
+        assert!(diag.message.contains("Z_WRONG_NAME"));
+        assert!(diag.message.contains("Z_STATELESS_MAIN"));
+    }
+
+    #[test]
+    fn test_report_name_match_success() {
+        let source = "REPORT z_stateless_main.\nWRITE: / 'Test'.";
+        let mut options = CompileOptions::default();
+        options.filename = Some("z_stateless_main.abap".to_string());
+        options.mode = Some(LanguageMode::Standard);
+
+        let res = compile_source(source, options);
+        assert!(res.ok, "Should succeed when report name matches program filename");
+        assert!(!res.diagnostics.iter().any(|d| d.code == "REP001"));
+    }
+
+    #[test]
+    fn test_value_constructor_expression() {
+        let source = r#"
+REPORT z_value_test.
+TYPES: BEGIN OF ty_item,
+         id   TYPE i,
+         name TYPE string,
+       END OF ty_item.
+DATA: ls_row TYPE ty_item.
+ls_row = VALUE #( id = 42 name = 'Rust' ).
+WRITE: / 'ID:', ls_row-id, 'Name:', ls_row-name.
+"#;
+        let mut options = CompileOptions::default();
+        options.filename = Some("z_value_test.abap".to_string());
+        options.run = true;
+        options.mode = Some(LanguageMode::Standard);
+
+        let res = compile_source(source, options);
+        assert!(res.ok, "VALUE constructor test failed: {:?}", res.diagnostics);
+        let vm = res.vm.expect("VM result should be present");
+        assert_eq!(vm.output, vec!["ID: 42 Name: Rust"]);
+    }
+
+    #[test]
+    fn test_stateless_architecture_test_full() {
+        let source = r#"
+REPORT z_stateless_architecture_test.
+
+WRITE: / '--- PHASE 1: BYODB SQL INTERCEPTOR ---'.
+
+SELECT client, uname 
+  FROM usr02 
+  INTO TABLE @DATA(lt_db_users) 
+  UP TO 5 ROWS.
+
+IF sy-subrc = 0.
+  WRITE: / |DB SUCCESS! Fetched records via Postgres/Mock Interceptor.|.
+ELSE.
+  WRITE: / |DB WARNING: Query executed but no records found (sy-subrc = 4).|.
+ENDIF.
+
+WRITE: / '--- PHASE 2: MEMORY POINTER MUTATION ---'.
+
+TYPES: BEGIN OF ty_memory,
+         address TYPE string,
+         value   TYPE i,
+       END OF ty_memory.
+
+DATA: lt_heap TYPE TABLE OF ty_memory,
+      ls_heap TYPE ty_memory.
+
+ls_heap-address = '0x001'. ls_heap-value = 100. APPEND ls_heap TO lt_heap.
+ls_heap-address = '0x002'. ls_heap-value = 200. APPEND ls_heap TO lt_heap.
+ls_heap-address = '0x003'. ls_heap-value = 300. APPEND ls_heap TO lt_heap.
+
+LOOP AT lt_heap ASSIGNING FIELD-SYMBOL(<fs_node>) WHERE value > 150.
+  <fs_node>-value = <fs_node>-value * 2. 
+ENDLOOP.
+
+WRITE: / '--- PHASE 3: EXCEPTION STACK ---'.
+
+CLASS lcl_memory_manager DEFINITION.
+  PUBLIC SECTION.
+    CLASS-METHODS read_memory IMPORTING iv_addr TYPE string
+                              EXPORTING ev_val TYPE i.
+ENDCLASS.
+
+CLASS lcl_memory_manager IMPLEMENTATION.
+  METHOD read_memory.
+    READ TABLE lt_heap ASSIGNING FIELD-SYMBOL(<fs_read>) WITH KEY address = iv_addr.
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE cx_sy_itab_line_not_found.
+    ENDIF.
+    ev_val = <fs_read>-value.
+  ENDMETHOD.
+ENDCLASS.
+
+DATA: lv_val TYPE i.
+
+TRY.
+    lcl_memory_manager=>read_memory( EXPORTING iv_addr = '0x002' IMPORTING ev_val = lv_val ).
+    WRITE: / |Pointer 0x002 Value (Should be 400): { lv_val }|.
+    
+    lcl_memory_manager=>read_memory( EXPORTING iv_addr = '0x999' IMPORTING ev_val = lv_val ).
+    
+    WRITE: / 'FAIL: The VM ignored the exception! This line should not print.'.
+    
+  CATCH cx_sy_itab_line_not_found.
+    WRITE: / 'SUCCESS: Exception caught! Memory address 0x999 not found.'.
+ENDTRY.
+
+WRITE: / '--- VM EXECUTION COMPLETE ---'.
+"#;
+        let mut options = CompileOptions::default();
+        options.filename = Some("z_stateless_architecture_test.abap".to_string());
+        options.run = true;
+        options.mode = Some(LanguageMode::Standard);
+
+        let res = compile_source(source, options);
+        assert!(res.ok, "Stateless architecture test failed: {:?}", res.diagnostics);
+        let vm = res.vm.expect("VM result should be present");
+        assert_eq!(
+            vm.output,
+            vec![
+                "--- PHASE 1: BYODB SQL INTERCEPTOR ---",
+                "DB SUCCESS! Fetched records via Postgres/Mock Interceptor.",
+                "--- PHASE 2: MEMORY POINTER MUTATION ---",
+                "--- PHASE 3: EXCEPTION STACK ---",
+                "Pointer 0x002 Value (Should be 400): 400",
+                "SUCCESS: Exception caught! Memory address 0x999 not found.",
+                "--- VM EXECUTION COMPLETE ---",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_memory_hump_stress_test() {
+        let source = r#"
+REPORT z_memory_hump_stress_test.
+
+WRITE: / '--- INITIALIZING MEMORY HUMP TEST ---'.
+
+TYPES: BEGIN OF ty_node,
+         id      TYPE i,
+         counter TYPE i,
+         status  TYPE string,
+       END OF ty_node.
+
+DATA: lt_data  TYPE TABLE OF ty_node,
+      ls_data  TYPE ty_node,
+      lv_index TYPE i VALUE 1.
+
+WHILE lv_index <= 500.
+  ls_data-id      = lv_index.
+  ls_data-counter = 0.
+  ls_data-status  = 'INIT'.
+  APPEND ls_data TO lt_data.
+  lv_index = lv_index + 1.
+ENDWHILE.
+
+WRITE: / 'Memory allocated. Starting pointer alias mutation...'.
+
+LOOP AT lt_data ASSIGNING FIELD-SYMBOL(<fs_node>).
+  <fs_node>-counter = <fs_node>-id * 10.
+  
+  IF <fs_node>-counter > 2500.
+    <fs_node>-status = 'HIGH_LOAD'.
+  ELSE.
+    <fs_node>-status = 'SAFE_LOAD'.
+  ENDIF.
+ENDLOOP.
+
+READ TABLE lt_data ASSIGNING FIELD-SYMBOL(<fs_target>) WITH KEY id = 404.
+IF sy-subrc = 0.
+  <fs_target>-status = 'CORRUPTED_BY_POINTER'.
+ENDIF.
+
+DATA: lv_math_res TYPE i,
+      lv_zero     TYPE i VALUE 0.
+TRY.
+    lv_math_res = 100 / lv_zero.
+  CATCH cx_sy_zerodivide.
+    lv_math_res = -999.
+ENDTRY.
+
+WRITE: / '--- VALIDATION RESULTS ---'.
+
+READ TABLE lt_data INTO ls_data WITH KEY id = 500.
+WRITE: / |Record 500 Status (Expected: HIGH_LOAD): { ls_data-status }|.
+WRITE: / |Record 500 Counter (Expected: 5000): { ls_data-counter }|.
+
+READ TABLE lt_data INTO ls_data WITH KEY id = 100.
+WRITE: / |Record 100 Status (Expected: SAFE_LOAD): { ls_data-status }|.
+WRITE: / |Record 100 Counter (Expected: 1000): { ls_data-counter }|.
+
+READ TABLE lt_data INTO ls_data WITH KEY id = 404.
+WRITE: / |Record 404 Status (Expected: CORRUPTED_BY_POINTER): { ls_data-status }|.
+
+WRITE: / |Exception Engine Check (Expected: -999): { lv_math_res }|.
+"#;
+        let mut options = CompileOptions::default();
+        options.filename = Some("z_memory_hump_stress_test.abap".to_string());
+        options.run = true;
+        options.mode = Some(LanguageMode::Standard);
+
+        let res = compile_source(source, options);
+        assert!(res.ok, "Memory hump test compile failed: {:?}", res.diagnostics);
+        let vm = res.vm.expect("VM result should be present");
+        for line in &vm.output {
+            println!("{}", line);
+        }
+        assert_eq!(
+            vm.output,
+            vec![
+                "--- INITIALIZING MEMORY HUMP TEST ---",
+                "Memory allocated. Starting pointer alias mutation...",
+                "--- VALIDATION RESULTS ---",
+                "Record 500 Status (Expected: HIGH_LOAD): HIGH_LOAD",
+                "Record 500 Counter (Expected: 5000): 5000",
+                "Record 100 Status (Expected: SAFE_LOAD): SAFE_LOAD",
+                "Record 100 Counter (Expected: 1000): 1000",
+                "Record 404 Status (Expected: CORRUPTED_BY_POINTER): CORRUPTED_BY_POINTER",
+                "Exception Engine Check (Expected: -999): -999",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_oo_abap_test() {
+        let source = r#"
+REPORT z_oo_abap_test.
+
+WRITE: / '--- INITIALIZING OO ABAP TEST ---'.
+
+INTERFACE lif_engine.
+  METHODS: start_engine RETURNING VALUE(rv_status) TYPE string.
+ENDINTERFACE.
+
+CLASS lcl_vehicle DEFINITION.
+  PUBLIC SECTION.
+    INTERFACES lif_engine.
+    CLASS-METHODS: get_total_vehicles RETURNING VALUE(rv_count) TYPE i.
+    METHODS: constructor IMPORTING iv_make TYPE string,
+             display_info.
+  PRIVATE SECTION.
+    CLASS-DATA: gv_total_vehicles TYPE i VALUE 0.
+    DATA: mv_make TYPE string.
+ENDCLASS.
+
+CLASS lcl_vehicle IMPLEMENTATION.
+  METHOD constructor.
+    mv_make = iv_make.
+    gv_total_vehicles = gv_total_vehicles + 1.
+  ENDMETHOD.
+
+  METHOD lif_engine~start_engine.
+    rv_status = |The engine of the { mv_make } is roaring!|.
+  ENDMETHOD.
+
+  METHOD display_info.
+    WRITE: / |Vehicle Make: { mv_make }|.
+  ENDMETHOD.
+
+  METHOD get_total_vehicles.
+    rv_count = gv_total_vehicles.
+  ENDMETHOD.
+ENDCLASS.
+
+WRITE: / '--- VALIDATION RESULTS ---'.
+
+DATA: lo_car   TYPE REF TO lcl_vehicle,
+      lo_truck TYPE REF TO lcl_vehicle,
+      lv_msg   TYPE string.
+
+CREATE OBJECT lo_car EXPORTING iv_make = 'Porsche 911'.
+CREATE OBJECT lo_truck EXPORTING iv_make = 'Volvo F16'.
+
+lo_car->display_info( ).
+lo_truck->display_info( ).
+
+lv_msg = lo_car->lif_engine~start_engine( ).
+WRITE: / |Interface Output: { lv_msg }|.
+
+DATA(lv_total) = lcl_vehicle=>get_total_vehicles( ).
+WRITE: / |Total Vehicles in Memory (Expected 2): { lv_total }|.
+"#;
+        let mut options = CompileOptions::default();
+        options.run = true;
+        options.mode = Some(LanguageMode::Standard);
+        let res = compile_source(source, options);
+        assert!(res.ok, "OO ABAP test failed: {:?}", res.diagnostics);
+        let vm = res.vm.expect("VM should run");
+        for line in &vm.output {
+            println!("{}", line);
+        }
     }
 }

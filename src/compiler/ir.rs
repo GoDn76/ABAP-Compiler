@@ -61,6 +61,10 @@ pub enum Op {
     Call { name: String, argc: usize },
     #[serde(rename = "constructor")]
     Constructor { fields: Vec<String> },
+    #[serde(rename = "table_constructor")]
+    TableConstructor { count: usize },
+    #[serde(rename = "raise")]
+    Raise { exception_type: String },
     #[serde(rename = "write")]
     Write { groups: Vec<usize>, newline: bool },
     #[serde(rename = "jump_if_false")]
@@ -107,6 +111,8 @@ pub enum Op {
     Insert,
     #[serde(rename = "read_table")]
     ReadTable {
+        #[serde(rename = "tableName", skip_serializing_if = "Option::is_none")]
+        table_name: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         target: Option<String>,
         #[serde(default)]
@@ -209,6 +215,24 @@ pub enum Op {
     EmlCommit,
     #[serde(rename = "eml_rollback")]
     EmlRollback,
+    #[serde(rename = "push_handler")]
+    PushHandler {
+        #[serde(rename = "catchType")]
+        catch_type: String,
+        target: i64,
+    },
+    #[serde(rename = "pop_handler")]
+    PopHandler,
+    #[serde(rename = "assign_alias")]
+    AssignAlias {
+        source: String,
+        target: String,
+    },
+    #[serde(rename = "assign_table_alias")]
+    AssignTableAlias {
+        target: String,
+        table_name: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -313,6 +337,7 @@ pub struct Lowerer {
     pub temp_counter: usize,
     pub loop_ends: Vec<i64>,
     pub loop_continues: Vec<i64>,
+    pub continue_placeholders: Vec<Vec<usize>>,
     pub program: Option<Program>,
 }
 
@@ -325,6 +350,7 @@ impl Lowerer {
             temp_counter: 0,
             loop_ends: Vec::new(),
             loop_continues: Vec::new(),
+            continue_placeholders: Vec::new(),
             program: None,
         }
     }
@@ -746,6 +772,23 @@ impl Lowerer {
                     _ => {}
                 }
             }
+            Statement::Assign { source, target, .. } => {
+                let src_name = match source {
+                    Expr::Variable { name, .. } => name.clone(),
+                    Expr::Field { base, field, .. } => {
+                        if let Expr::Variable { name: b, .. } = &**base {
+                            format!("{}-{}", b, field)
+                        } else {
+                            String::new()
+                        }
+                    }
+                    _ => String::new(),
+                };
+                self.ops.push(Op::AssignAlias {
+                    source: src_name,
+                    target: target.clone(),
+                });
+            }
             Statement::WriteStmt { values, groups, newline, .. } => {
                 for v in values {
                     self.expr(v);
@@ -894,11 +937,31 @@ impl Lowerer {
                 }
             }
             Statement::LoopStmt { source, target, inline, body, .. } => {
-                self.expr(source);
-                self.ops.push(Op::Call {
-                    name: "__iter_start".to_string(),
-                    argc: 1,
-                });
+                if let Expr::Variable { name, .. } = source {
+                    self.ops.push(Op::Push {
+                        value: Value::String(name.clone()),
+                    });
+                    if let Some(t) = target {
+                        self.ops.push(Op::Push {
+                            value: Value::String(t.clone()),
+                        });
+                        self.ops.push(Op::Call {
+                            name: "__iter_start".to_string(),
+                            argc: 2,
+                        });
+                    } else {
+                        self.ops.push(Op::Call {
+                            name: "__iter_start".to_string(),
+                            argc: 1,
+                        });
+                    }
+                } else {
+                    self.expr(source);
+                    self.ops.push(Op::Call {
+                        name: "__iter_start".to_string(),
+                        argc: 1,
+                    });
+                }
                 self.ops.push(Op::Drop);
 
                 let top = self.ops.len() as i64;
@@ -910,12 +973,21 @@ impl Lowerer {
                 self.ops.push(Op::JumpIfFalse { target: -1 });
                 self.loop_ends.push(-1);
                 self.loop_continues.push(-1);
+                self.continue_placeholders.push(Vec::new());
 
                 if let Some(t) = target {
                     self.ops.push(Op::Call {
                         name: "__iter_value".to_string(),
                         argc: 0,
                     });
+                    if t.starts_with('<') && t.ends_with('>') {
+                        if let Expr::Variable { name: ref tbl_name, .. } = source {
+                            self.ops.push(Op::AssignTableAlias {
+                                target: t.clone(),
+                                table_name: tbl_name.clone(),
+                            });
+                        }
+                    }
                     self.ops.push(Op::Store { name: t.clone() });
                     if inline.unwrap_or(false) {
                         self.vars.push(VarIR {
@@ -945,6 +1017,11 @@ impl Lowerer {
                 let cont = self.ops.len() as i64;
                 let last_idx = self.loop_continues.len() - 1;
                 self.loop_continues[last_idx] = cont;
+                if let Some(c_list) = self.continue_placeholders.pop() {
+                    for idx in c_list {
+                        self.patch(idx, cont);
+                    }
+                }
 
                 self.ops.push(Op::Call {
                     name: "__iter_next".to_string(),
@@ -975,11 +1052,38 @@ impl Lowerer {
                     self.ops.push(Op::Store { name: name.clone() });
                 }
             }
-            Statement::ReadTableStmt { table, target, index, key, .. } => {
+            Statement::ReadTableStmt { table, target, inline, index, key, .. } => {
+                if let Some(t) = target {
+                    if inline.unwrap_or(false) {
+                        self.vars.push(VarIR {
+                            name: t.clone(),
+                            type_ref: TypeRef::any(),
+                            constant: false,
+                            parameter: None,
+                            obligatory: None,
+                            checkbox: None,
+                            selection_options: None,
+                            no_intervals: None,
+                            no_extension: None,
+                            for_field: None,
+                            radiobutton_group: None,
+                            lower_case: None,
+                            no_display: None,
+                            value_help: None,
+                            has_default: None,
+                            initial_value: None,
+                        });
+                    }
+                }
+                let tbl_name = match table {
+                    Expr::Variable { name, .. } => Some(name.clone()),
+                    _ => None,
+                };
                 if let Some(idx) = index {
                     self.expr(table);
                     self.expr(idx);
                     self.ops.push(Op::ReadTable {
+                        table_name: tbl_name.clone(),
                         target: target.clone(),
                         index: true,
                         key: None,
@@ -995,6 +1099,7 @@ impl Lowerer {
                         }
                     }
                     self.ops.push(Op::ReadTable {
+                        table_name: tbl_name,
                         target: target.clone(),
                         index: false,
                         key: if !keys.is_empty() { Some(keys) } else { None },
@@ -1128,8 +1233,14 @@ impl Lowerer {
             Statement::FlowStmt { op, condition, .. } => {
                 match op.as_str() {
                     "continue" => {
-                        let target = self.loop_continues.last().copied().unwrap_or(self.ops.len() as i64);
-                        self.ops.push(Op::Jump { target });
+                        if let Some(c_list) = self.continue_placeholders.last_mut() {
+                            let idx = self.ops.len();
+                            self.ops.push(Op::Jump { target: -1 });
+                            c_list.push(idx);
+                        } else {
+                            let target = self.loop_continues.last().copied().unwrap_or(self.ops.len() as i64);
+                            self.ops.push(Op::Jump { target });
+                        }
                     }
                     "exit" => {
                         let target = self.loop_ends.last().copied().unwrap_or(self.ops.len() as i64);
@@ -1144,8 +1255,14 @@ impl Lowerer {
                         } else {
                             self.ops.push(Op::Push { value: serde_json::json!(false) });
                         }
-                        let target = self.loop_continues.last().copied().unwrap_or(self.ops.len() as i64);
-                        self.ops.push(Op::JumpIfFalse { target });
+                        if let Some(c_list) = self.continue_placeholders.last_mut() {
+                            let idx = self.ops.len();
+                            self.ops.push(Op::JumpIfFalse { target: -1 });
+                            c_list.push(idx);
+                        } else {
+                            let target = self.loop_continues.last().copied().unwrap_or(self.ops.len() as i64);
+                            self.ops.push(Op::JumpIfFalse { target });
+                        }
                     }
                     _ => {}
                 }
@@ -1165,6 +1282,16 @@ impl Lowerer {
                 });
             }
             Statement::MethodCallStmt {
+                receiver,
+                method,
+                args,
+                named,
+                output_named,
+                changing_named,
+                static_call,
+                ..
+            }
+            | Statement::MethodCall {
                 receiver,
                 method,
                 args,
@@ -1221,6 +1348,11 @@ impl Lowerer {
                     named: named_keys,
                     output_bindings: bindings,
                     static_call: static_call.unwrap_or(false),
+                });
+            }
+            Statement::RaiseStmt { exception_type, .. } => {
+                self.ops.push(Op::Raise {
+                    exception_type: exception_type.clone(),
                 });
             }
             Statement::EmlReadStmt {
@@ -1338,13 +1470,79 @@ impl Lowerer {
                     });
                 }
             }
-            Statement::TryStmt { body, .. } => {
+            Statement::TryStmt { body, catches, .. } => {
+                let mut handler_indices = Vec::new();
+                for c in catches {
+                    let idx = self.ops.len();
+                    self.ops.push(Op::PushHandler {
+                        catch_type: c.catch_type.clone(),
+                        target: -1,
+                    });
+                    handler_indices.push((idx, c));
+                }
+
                 for x in body {
                     self.statement(x);
                 }
+
+                for _ in catches {
+                    self.ops.push(Op::PopHandler);
+                }
+
+                let end_jump = self.ops.len();
+                self.ops.push(Op::Jump { target: -1 });
+
+                let mut catch_end_jumps = Vec::new();
+                for (handler_idx, c) in handler_indices {
+                    let catch_start = self.ops.len() as i64;
+                    self.patch(handler_idx, catch_start);
+                    if let Some(ref v) = c.variable {
+                        self.ops.push(Op::Store { name: v.clone() });
+                    }
+                    for s in &c.body {
+                        self.statement(s);
+                    }
+                    let ce_jump = self.ops.len();
+                    self.ops.push(Op::Jump { target: -1 });
+                    catch_end_jumps.push(ce_jump);
+                }
+
+                let end = self.ops.len() as i64;
+                self.patch(end_jump, end);
+                for j in catch_end_jumps {
+                    self.patch(j, end);
+                }
             }
-            Statement::ClassDecl(..) | Statement::TypeDecl(..) | Statement::EmptyStmt { .. } => {
+            Statement::ClassDecl(..)
+            | Statement::TypeDecl(..)
+            | Statement::InterfaceDecl(..)
+            | Statement::ClassDefStmt(..)
+            | Statement::ClassImplStmt(..)
+            | Statement::EmptyStmt { .. } => {
                 self.ops.push(Op::Nop);
+            }
+            Statement::CreateObject(co) => {
+                let class_name = if let Some(cls) = &co.class_name {
+                    cls.clone()
+                } else if let Some(v) = self.vars.iter().find(|x| x.name.eq_ignore_ascii_case(&co.target)) {
+                    match &v.type_ref {
+                        TypeRef::Object { class_name } => class_name.clone(),
+                        _ => co.target.clone(),
+                    }
+                } else {
+                    co.target.clone()
+                };
+                for a in co.exporting.values() {
+                    self.expr(a);
+                }
+                self.ops.push(Op::NewObject {
+                    class_name,
+                    positional_count: 0,
+                    named: co.exporting.keys().cloned().collect(),
+                });
+                self.ops.push(Op::Store {
+                    name: co.target.clone(),
+                });
             }
         }
     }
@@ -1530,7 +1728,20 @@ impl Lowerer {
             }
             Expr::Binary { op, left, right, .. } => {
                 self.expr(left);
-                self.expr(right);
+                if op.eq_ignore_ascii_case("IS") {
+                    if let Expr::Variable { name, .. } = &**right {
+                        let u = name.to_ascii_uppercase();
+                        if u == "ASSIGNED" || u == "INITIAL" || u == "BOUND" {
+                            self.ops.push(Op::Push { value: serde_json::json!(u) });
+                        } else {
+                            self.expr(right);
+                        }
+                    } else {
+                        self.expr(right);
+                    }
+                } else {
+                    self.expr(right);
+                }
                 self.ops.push(Op::Binary { op: op.clone() });
             }
             Expr::Call { name, args, .. } => {
@@ -1548,6 +1759,50 @@ impl Lowerer {
                     self.expr(&a.value);
                 }
                 self.ops.push(Op::Constructor { fields });
+            }
+            Expr::ValueConstructor { components, .. } => {
+                use crate::compiler::ast::ValueComponent;
+                let has_rows = components.iter().any(|c| matches!(c, ValueComponent::Row(_)));
+                if has_rows {
+                    let mut row_count = 0;
+                    for comp in components {
+                        if let ValueComponent::Row(row_comps) = comp {
+                            let mut fields = Vec::new();
+                            for rc in row_comps {
+                                match rc {
+                                    ValueComponent::Field { name, value } => {
+                                        fields.push(name.clone());
+                                        self.expr(value);
+                                    }
+                                    ValueComponent::Expression(expr) => {
+                                        fields.push("VAL".to_string());
+                                        self.expr(expr);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            self.ops.push(Op::Constructor { fields });
+                            row_count += 1;
+                        }
+                    }
+                    self.ops.push(Op::TableConstructor { count: row_count });
+                } else {
+                    let mut fields = Vec::new();
+                    for comp in components {
+                        match comp {
+                            ValueComponent::Field { name, value } => {
+                                fields.push(name.clone());
+                                self.expr(value);
+                            }
+                            ValueComponent::Expression(expr) => {
+                                fields.push("VAL".to_string());
+                                self.expr(expr);
+                            }
+                            _ => {}
+                        }
+                    }
+                    self.ops.push(Op::Constructor { fields });
+                }
             }
             Expr::NewObject { class_name, args, named, .. } => {
                 for a in args {
@@ -1714,6 +1969,9 @@ impl Lowerer {
         if let Some(op) = self.ops.get_mut(i) {
             match op {
                 Op::Jump { target: t } | Op::JumpIfFalse { target: t } => {
+                    *t = target;
+                }
+                Op::PushHandler { target: t, .. } => {
                     *t = target;
                 }
                 _ => {}

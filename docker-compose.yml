@@ -13,36 +13,18 @@ services:
       - ABAPC_HOST=0.0.0.0
       - ABAPC_NO_BROWSER=1
       - RUST_LOG=info
-      - DATABASE_URL=postgres://abap:abap_secret@postgres:5432/abapc_studio
-      - REDIS_URL=redis://redis:6379/0
-    depends_on:
-      redis:
-        condition: service_started
-      postgres:
-        condition: service_healthy
+      # Connect to host Redis (running on server outside Docker)
+      - REDIS_URL=redis://host.docker.internal:6379/0
+      # Optional: default DB or use BYODB in UI
+      - DATABASE_URL=postgres://postgres:password@host.docker.internal:5432/postgres
+      # Rate Limiting (RPS / RPM config):
+      # RATE_LIMIT_MAX_REQUESTS: max requests per IP (0 disables rate limiting)
+      # RATE_LIMIT_WINDOW_SECS: window in seconds (set to 1 for Requests Per Second, 60 for RPM)
+      - RATE_LIMIT_MAX_REQUESTS=100
+      - RATE_LIMIT_WINDOW_SECS=60
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./executed codes:/app/executed codes
       - ./runtime:/app/runtime
 
-  redis:
-    image: redis:7-alpine
-    container_name: abapc_studio_redis
-    ports:
-      - "6379:6379"
-    restart: unless-stopped
-
-  postgres:
-    image: postgres:16-alpine
-    container_name: abapc_studio_postgres
-    environment:
-      POSTGRES_USER: abap
-      POSTGRES_PASSWORD: abap_secret
-      POSTGRES_DB: abapc_studio
-    ports:
-      - "5432:5432"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U abap -d abapc_studio"]
-      interval: 3s
-      timeout: 3s
-      retries: 5

@@ -25,6 +25,14 @@ pub fn create_router(state: AppState) -> Router {
 
     Router::new()
         .merge(api)
+        .route("/", get({
+            let app_dir = state.config.app_dir.clone();
+            move || serve_named_file(app_dir, "gui.html")
+        }))
+        .route("/gui", get({
+            let app_dir = state.config.app_dir.clone();
+            move || serve_named_file(app_dir, "gui.html")
+        }))
         .route("/sapgui", get(move || serve_named_file(app_dir.clone(), "gui.html")))
         .route("/transactions", get({
             let app_dir = state.config.app_dir.clone();
@@ -64,7 +72,7 @@ async fn serve_static_file(app_dir: String, req: Request) -> Response {
     let path_str = req.uri().path();
     let clean = path_str.split('?').next().unwrap_or("/");
     let relative = if clean == "/" {
-        "index.html"
+        "gui.html"
     } else {
         clean.trim_start_matches('/')
     };
@@ -96,7 +104,7 @@ async fn serve_static_file(app_dir: String, req: Request) -> Response {
             let mime_type = match ext.as_str() {
                 "html" => "text/html; charset=utf-8",
                 "css" => "text/css; charset=utf-8",
-                "js" => "text/javascript; charset=utf-8",
+                "js" | "jsx" => "text/javascript; charset=utf-8",
                 "svg" => "image/svg+xml",
                 "json" => "application/json; charset=utf-8",
                 _ => "application/octet-stream",

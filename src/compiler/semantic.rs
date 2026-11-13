@@ -328,6 +328,9 @@ impl SemanticAnalyzer {
                     }
                 }
             }
+            Statement::Assign { source, .. } => {
+                self.check_expr(source, d);
+            }
             Statement::WriteStmt { values, .. } => {
                 for v in values {
                     self.check_expr(v, d);
@@ -387,8 +390,13 @@ impl SemanticAnalyzer {
                 self.check_expr(value, d);
                 self.check_expr(table, d);
             }
-            Statement::ReadTableStmt { table, index, key, .. } => {
+            Statement::ReadTableStmt { table, target, inline, index, key, .. } => {
                 self.check_expr(table, d);
+                if let Some(t) = target {
+                    if inline.unwrap_or(false) {
+                        self.declare(t, TypeRef::any(), false, None, d);
+                    }
+                }
                 if let Some(idx) = index {
                     self.check_expr(idx, d);
                 }
@@ -465,7 +473,8 @@ impl SemanticAnalyzer {
                     self.check_expr(v, d);
                 }
             }
-            Statement::MethodCallStmt { receiver, method, args, named, .. } => {
+            Statement::MethodCallStmt { receiver, method, args, named, .. }
+            | Statement::MethodCall { receiver, method, args, named, .. } => {
                 if !receiver.eq_ignore_ascii_case("OUT") {
                     if let Some(info) = self.lookup(receiver) {
                         if let TypeRef::Object { class_name } = &info.type_ref {
@@ -482,6 +491,7 @@ impl SemanticAnalyzer {
                     self.check_expr(a, d);
                 }
             }
+            Statement::RaiseStmt { .. } => {}
             Statement::EmlReadStmt { filters, .. } => {
                 for r in filters {
                     for f in &r.fields {
@@ -519,6 +529,9 @@ impl SemanticAnalyzer {
         match expr {
             Expr::Variable { name, start, end } => {
                 let upper = name.to_ascii_uppercase();
+                if upper == "ASSIGNED" || upper == "INITIAL" || upper == "BOUND" || upper == "REQUESTED" {
+                    return;
+                }
                 let base = upper.split('-').next().unwrap();
                 if !self.classes.contains_key(&upper)
                     && self.lookup(name).is_none()
@@ -550,6 +563,22 @@ impl SemanticAnalyzer {
             Expr::Constructor { assignments, .. } => {
                 for a in assignments {
                     self.check_expr(&a.value, d);
+                }
+            }
+            Expr::ValueConstructor { components, .. } => {
+                fn check_vc(comp: &crate::compiler::ast::ValueComponent, sem: &mut SemanticAnalyzer, d: &mut DiagnosticBag) {
+                    match comp {
+                        crate::compiler::ast::ValueComponent::Field { value, .. } => sem.check_expr(value, d),
+                        crate::compiler::ast::ValueComponent::Expression(value) => sem.check_expr(value, d),
+                        crate::compiler::ast::ValueComponent::Row(rows) => {
+                            for r in rows {
+                                check_vc(r, sem, d);
+                            }
+                        }
+                    }
+                }
+                for c in components {
+                    check_vc(c, self, d);
                 }
             }
             Expr::NewObject { args, named, .. } => {

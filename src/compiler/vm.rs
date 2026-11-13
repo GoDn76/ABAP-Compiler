@@ -4,6 +4,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
+#[derive(Clone, Debug)]
+struct ExceptionHandler {
+    catch_type: String,
+    target: usize,
+    stack_depth: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VMResult {
     pub output: Vec<String>,
@@ -22,7 +29,7 @@ pub struct EmlPendingOp {
     pub data: Option<Value>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SharedExecution {
     pub output: Vec<String>,
     pub classes: HashMap<String, ClassIR>,
@@ -33,11 +40,14 @@ pub struct SharedExecution {
     pub depth: usize,
     pub eml_pending: Vec<EmlPendingOp>,
     pub newline_required: bool,
+    pub globals: HashMap<String, Value>,
 }
 
 pub struct IteratorState {
+    pub table_name: Option<String>,
     pub values: Vec<Value>,
     pub index: usize,
+    pub target_fs: Option<String>,
 }
 
 pub fn default_vm_database() -> HashMap<String, Vec<Value>> {
@@ -72,6 +82,14 @@ pub fn default_vm_database() -> HashMap<String, Vec<Value>> {
             serde_json::json!({"PRODUCT_ID":"P-100","PRODUCT_NAME":"Keyboard","CATEGORY":"ACCESSORY","PRICE":1200,"CURRENCY":"INR"}),
             serde_json::json!({"PRODUCT_ID":"P-200","PRODUCT_NAME":"Mouse","CATEGORY":"ACCESSORY","PRICE":700,"CURRENCY":"INR"}),
             serde_json::json!({"PRODUCT_ID":"P-300","PRODUCT_NAME":"Monitor","CATEGORY":"DISPLAY","PRICE":15000,"CURRENCY":"INR"}),
+        ],
+    );
+    db.insert(
+        "USR02".to_string(),
+        vec![
+            serde_json::json!({"CLIENT":"001","UNAME":"DEVELOPER"}),
+            serde_json::json!({"CLIENT":"001","UNAME":"BCUSER"}),
+            serde_json::json!({"CLIENT":"001","UNAME":"GAURAV"}),
         ],
     );
     db
@@ -122,6 +140,7 @@ impl VM {
             depth: 0,
             eml_pending: Vec::new(),
             newline_required: false,
+            globals: HashMap::new(),
         };
 
         let shared = match shared_opt {
@@ -153,6 +172,38 @@ impl VM {
 
         let mut pc = 0;
         let mut return_flag = false;
+        let mut handlers: Vec<ExceptionHandler> = Vec::new();
+        let mut alias_map: HashMap<String, String> = HashMap::new();
+        let mut table_alias_map: HashMap<String, (String, usize)> = HashMap::new();
+
+        macro_rules! try_op {
+            ($expr:expr) => {
+                match $expr {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let err_str = e.to_string();
+                        let mut handled = false;
+                        while let Some(h) = handlers.pop() {
+                            let matches_type = h.catch_type.eq_ignore_ascii_case("CX_ROOT")
+                                || h.catch_type.eq_ignore_ascii_case(&err_str)
+                                || err_str.to_ascii_uppercase().contains(&h.catch_type)
+                                || (err_str == "CX_SY_ZERODIVIDE" && h.catch_type.eq_ignore_ascii_case("CX_SY_ZERODIVIDE"))
+                                || (err_str.starts_with("Division by zero") && h.catch_type.eq_ignore_ascii_case("CX_SY_ZERODIVIDE"));
+                            if matches_type {
+                                stack.truncate(h.stack_depth);
+                                pc = h.target;
+                                handled = true;
+                                break;
+                            }
+                        }
+                        if !handled {
+                            return Err(err_str);
+                        }
+                        continue;
+                    }
+                }
+            };
+        }
 
         while pc < ir.ops.len() {
             let op = &ir.ops[pc];
@@ -171,13 +222,37 @@ impl VM {
                     pc += 1;
                 }
                 Op::Load { name } => {
-                    let v = get_var(&vars, shared, name);
+                    let key = name.to_ascii_uppercase();
+                    let v = if let Some(aliased) = alias_map.get(&key) {
+                        get_var(&vars, shared, aliased)
+                    } else if let Some((tbl, row_idx)) = table_alias_map.get(&key) {
+                        if let Some(Value::Array(arr)) = vars.get(tbl) {
+                            arr.get(*row_idx).cloned().unwrap_or(Value::Null)
+                        } else {
+                            get_var(&vars, shared, name)
+                        }
+                    } else {
+                        get_var(&vars, shared, name)
+                    };
                     stack.push(v);
                     pc += 1;
                 }
                 Op::Store { name } => {
                     let v = stack.pop().ok_or("VM stack underflow on STORE")?;
-                    set_var(&mut vars, shared, name, v);
+                    let key = name.to_ascii_uppercase();
+                    if let Some(aliased) = alias_map.get(&key).cloned() {
+                        set_var(&mut vars, shared, &aliased, v.clone());
+                        vars.insert(key, v);
+                    } else if let Some((tbl, row_idx)) = table_alias_map.get(&key).cloned() {
+                        if let Some(Value::Array(arr)) = vars.get_mut(&tbl) {
+                            if row_idx < arr.len() {
+                                arr[row_idx] = v.clone();
+                            }
+                        }
+                        vars.insert(key, v);
+                    } else {
+                        set_var(&mut vars, shared, name, v);
+                    }
                     pc += 1;
                 }
                 Op::LoadStatic { class_name, name } => {
@@ -236,8 +311,12 @@ impl VM {
                 }
                 Op::Neg => {
                     let v = stack.pop().unwrap_or(Value::Null);
-                    let n = to_number(&v)?;
-                    stack.push(serde_json::json!(-n));
+                    let n = try_op!(to_number(&v));
+                    if n.fract() == 0.0 && n >= i64::MIN as f64 && n <= i64::MAX as f64 {
+                        stack.push(serde_json::json!(-(n as i64)));
+                    } else {
+                        stack.push(serde_json::json!(-n));
+                    }
                     pc += 1;
                 }
                 Op::Not => {
@@ -248,13 +327,14 @@ impl VM {
                 Op::Binary { op } => {
                     let r = stack.pop().unwrap_or(Value::Null);
                     let l = stack.pop().unwrap_or(Value::Null);
-                    stack.push(binary_op(op, &l, &r)?);
+                    let res = try_op!(binary_op(op, &l, &r));
+                    stack.push(res);
                     pc += 1;
                 }
                 Op::Call { name, argc } => {
                     let take_count = (*argc).min(stack.len());
                     let args: Vec<Value> = stack.drain(stack.len() - take_count..).collect();
-                    let special = iterator_call(name, &args, &mut iterators, &mut vars);
+                    let special = iterator_call(name, &args, &mut iterators, &mut vars, &mut table_alias_map);
                     if special.handled {
                         if name.eq_ignore_ascii_case("__iter_value") {
                             shared.newline_required = true;
@@ -276,6 +356,16 @@ impl VM {
                         obj.insert(f.to_ascii_uppercase(), val);
                     }
                     stack.push(Value::Object(obj));
+                    pc += 1;
+                }
+                Op::TableConstructor { count } => {
+                    let take_count = (*count).min(stack.len());
+                    let items: Vec<Value> = stack.drain(stack.len() - take_count..).collect();
+                    stack.push(Value::Array(items));
+                    pc += 1;
+                }
+                Op::Raise { exception_type } => {
+                    try_op!(Err::<(), _>(exception_type.clone()));
                     pc += 1;
                 }
                 Op::NewObject { class_name, positional_count, named } => {
@@ -301,10 +391,13 @@ impl VM {
                         );
                     }
 
-                    let object = initialize_object(shared, class_name);
+                    let mut object = initialize_object(shared, class_name);
                     let ctor = resolve_runtime_method(shared, class_name, "CONSTRUCTOR");
                     if ctor.is_some() {
-                        self.invoke_user_method(&object, "CONSTRUCTOR", &positional, &named_map, shared, max_steps)?;
+                        let res = self.invoke_user_method(&object, "CONSTRUCTOR", &positional, &named_map, shared, max_steps)?;
+                        if let Some(me) = res.receiver {
+                            object = me;
+                        }
                     } else if arg_count > 0 {
                         return Err(format!("Class '{}' has no constructor accepting arguments.", class_name));
                     }
@@ -334,7 +427,9 @@ impl VM {
                         }
                     }
 
-                    let result = self.invoke_user_method(&receiver, method, &positional, &named_map, shared, max_steps)?;
+                    shared.globals.extend(vars.clone());
+                    let result = try_op!(self.invoke_user_method(&receiver, method, &positional, &named_map, shared, max_steps));
+                    vars.extend(shared.globals.clone());
                     apply_output_bindings(&result.outputs, output_bindings, &mut vars);
                     stack.push(result.value);
                     pc += 1;
@@ -552,7 +647,7 @@ impl VM {
                     }
                     pc += 1;
                 }
-                Op::ReadTable { target, index, key } => {
+                Op::ReadTable { table_name, target, index, key } => {
                     let mut idx: i64 = -1;
                     let table = if *index {
                         let n_val = stack.pop().unwrap_or(Value::Null);
@@ -593,7 +688,18 @@ impl VM {
 
                     if let Some(tgt) = target {
                         let record = found.cloned().unwrap_or_else(|| default_record(arr.first()));
-                        set_var(&mut vars, shared, tgt, record);
+                        set_var(&mut vars, shared, tgt, record.clone());
+                        let tgt_key = tgt.to_ascii_uppercase();
+                        if tgt.starts_with('<') && tgt.ends_with('>') {
+                            if found.is_some() {
+                                if let Some(ref tbl) = table_name {
+                                    table_alias_map.insert(tgt_key.clone(), (tbl.to_ascii_uppercase(), idx as usize));
+                                }
+                            } else {
+                                table_alias_map.remove(&tgt_key);
+                                vars.remove(&tgt_key);
+                            }
+                        }
                     }
 
                     let subrc_val = if found.is_some() { 0 } else { 4 };
@@ -966,7 +1072,14 @@ impl VM {
                         if *static_call {
                             self.ensure_class_initialized(receiver, shared, max_steps)?;
                         }
-                        let result = self.invoke_user_method(&recv, method, &positional, &named_map, shared, max_steps)?;
+                        shared.globals.extend(vars.clone());
+                        let result = try_op!(self.invoke_user_method(&recv, method, &positional, &named_map, shared, max_steps));
+                        vars.extend(shared.globals.clone());
+                        if let Some(me) = result.receiver {
+                            if !*static_call {
+                                set_var(&mut vars, shared, receiver, me);
+                            }
+                        }
                         apply_output_bindings(&result.outputs, output_bindings, &mut vars);
                     }
                     pc += 1;
@@ -1005,6 +1118,32 @@ impl VM {
                 }
                 Op::Return => {
                     return_flag = true;
+                }
+                Op::PushHandler { catch_type, target } => {
+                    handlers.push(ExceptionHandler {
+                        catch_type: catch_type.to_ascii_uppercase(),
+                        target: *target as usize,
+                        stack_depth: stack.len(),
+                    });
+                    pc += 1;
+                }
+                Op::PopHandler => {
+                    handlers.pop();
+                    pc += 1;
+                }
+                Op::AssignAlias { source, target } => {
+                    let tgt_key = target.to_ascii_uppercase();
+                    let src_key = source.to_ascii_uppercase();
+                    alias_map.insert(tgt_key.clone(), src_key.clone());
+                    let val = get_var(&vars, shared, &src_key);
+                    vars.insert(tgt_key, val);
+                    pc += 1;
+                }
+                Op::AssignTableAlias { target, table_name } => {
+                    let tabix = vars.get("SY-TABIX").and_then(|v| v.as_i64()).unwrap_or(1);
+                    let idx = if tabix > 0 { (tabix - 1) as usize } else { 0 };
+                    table_alias_map.insert(target.to_ascii_uppercase(), (table_name.to_ascii_uppercase(), idx));
+                    pc += 1;
                 }
             }
 
@@ -1098,7 +1237,7 @@ impl VM {
             ensure_static_data(shared, &class_name);
         }
 
-        let mut bindings: HashMap<String, Value> = HashMap::new();
+        let mut bindings: HashMap<String, Value> = shared.globals.clone();
         bindings.insert("ME".to_string(), receiver.clone());
 
         let mut positional_idx = 0;
@@ -1158,6 +1297,7 @@ impl VM {
         shared.depth -= 1;
 
         let res = exec_result?;
+        shared.globals.extend(res.variables.clone());
         let mut outputs = HashMap::new();
         for formal in &resolved.method.params {
             if formal.direction == "exporting" || formal.direction == "changing" {
@@ -1172,9 +1312,12 @@ impl VM {
             Value::Null
         };
 
+        let mutated_me = res.variables.get("ME").cloned();
+
         Ok(InvokeMethodResult {
             value: ret_val,
             outputs,
+            receiver: mutated_me,
         })
     }
 }
@@ -1182,6 +1325,7 @@ impl VM {
 pub struct InvokeMethodResult {
     pub value: Value,
     pub outputs: HashMap<String, Value>,
+    pub receiver: Option<Value>,
 }
 
 pub struct ResolvedMethodInfo {
@@ -1194,12 +1338,31 @@ fn resolve_runtime_method(
     class_name: &str,
     method_name: &str,
 ) -> Option<ResolvedMethodInfo> {
+    let m_upper = method_name.to_ascii_uppercase();
     for class_ir in class_lineage_runtime(shared, class_name) {
-        if let Some(m) = class_ir.methods.get(&method_name.to_ascii_uppercase()).cloned() {
+        if let Some(m) = class_ir.methods.get(&m_upper).cloned() {
             return Some(ResolvedMethodInfo {
                 class_ir,
                 method: m,
             });
+        }
+        if let Some(idx) = m_upper.rfind('~') {
+            let bare = &m_upper[idx + 1..];
+            if let Some(m) = class_ir.methods.get(bare).cloned() {
+                return Some(ResolvedMethodInfo {
+                    class_ir,
+                    method: m,
+                });
+            }
+        } else {
+            for (k, m) in &class_ir.methods {
+                if k.ends_with(&format!("~{}", m_upper)) {
+                    return Some(ResolvedMethodInfo {
+                        class_ir: class_ir.clone(),
+                        method: m.clone(),
+                    });
+                }
+            }
         }
     }
     None
@@ -1325,14 +1488,30 @@ fn iterator_call(
     args: &[Value],
     iters: &mut Vec<IteratorState>,
     vars: &mut HashMap<String, Value>,
+    table_alias_map: &mut HashMap<String, (String, usize)>,
 ) -> IteratorCallResult {
     match name.to_ascii_uppercase().as_str() {
         "__ITER_START" => {
-            let table = match args.first() {
-                Some(Value::Array(arr)) => arr.clone(),
-                _ => Vec::new(),
-            };
-            iters.push(IteratorState { values: table, index: 0 });
+            if let Some(tbl_name) = args.first().and_then(|v| v.as_str()) {
+                let fs_name = args.get(1).and_then(|v| v.as_str()).map(|s| s.to_string()).filter(|s| !s.is_empty());
+                iters.push(IteratorState {
+                    table_name: Some(tbl_name.to_ascii_uppercase()),
+                    values: Vec::new(),
+                    index: 0,
+                    target_fs: fs_name,
+                });
+            } else {
+                let table = match args.first() {
+                    Some(Value::Array(arr)) => arr.clone(),
+                    _ => Vec::new(),
+                };
+                iters.push(IteratorState {
+                    table_name: None,
+                    values: table,
+                    index: 0,
+                    target_fs: None,
+                });
+            }
             IteratorCallResult {
                 handled: true,
                 push: true,
@@ -1340,7 +1519,19 @@ fn iterator_call(
             }
         }
         "__ITER_HAS_NEXT" => {
-            let has = iters.last().map(|it| it.index < it.values.len()).unwrap_or(false);
+            let has = if let Some(it) = iters.last() {
+                if let Some(ref tbl) = it.table_name {
+                    if let Some(Value::Array(arr)) = vars.get(tbl) {
+                        it.index < arr.len()
+                    } else {
+                        false
+                    }
+                } else {
+                    it.index < it.values.len()
+                }
+            } else {
+                false
+            };
             if !has && !iters.is_empty() {
                 iters.pop();
             }
@@ -1352,8 +1543,20 @@ fn iterator_call(
         }
         "__ITER_VALUE" => {
             let (val, tabix) = if let Some(it) = iters.last() {
-                let v = it.values.get(it.index).cloned().unwrap_or(Value::Null);
-                (v, it.index + 1)
+                let tabix = it.index + 1;
+                let v = if let Some(ref tbl) = it.table_name {
+                    if let Some(ref fs) = it.target_fs {
+                        table_alias_map.insert(fs.to_ascii_uppercase(), (tbl.clone(), it.index));
+                    }
+                    if let Some(Value::Array(arr)) = vars.get(tbl) {
+                        arr.get(it.index).cloned().unwrap_or(Value::Null)
+                    } else {
+                        Value::Null
+                    }
+                } else {
+                    it.values.get(it.index).cloned().unwrap_or(Value::Null)
+                };
+                (v, tabix)
             } else {
                 (Value::Null, 0)
             };
@@ -1540,7 +1743,19 @@ pub fn format_value(v: &Value) -> String {
     match v {
         Value::Null => String::new(),
         Value::Bool(b) => if *b { "X".to_string() } else { String::new() },
-        Value::Number(n) => n.to_string(),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                i.to_string()
+            } else if let Some(f) = n.as_f64() {
+                if f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
+                    (f as i64).to_string()
+                } else {
+                    n.to_string()
+                }
+            } else {
+                n.to_string()
+            }
+        }
         Value::String(s) => s.clone(),
         Value::Array(..) | Value::Object(..) => serde_json::to_string(v).unwrap_or_default(),
     }
@@ -1591,6 +1806,28 @@ fn compare_values(a: &Value, b: &Value) -> std::cmp::Ordering {
     sa.cmp(&sb)
 }
 
+fn matches_abap_pattern(text: &str, pattern: &str) -> bool {
+    let t: Vec<char> = text.to_ascii_uppercase().chars().collect();
+    let p: Vec<char> = pattern.to_ascii_uppercase().chars().collect();
+    let mut dp = vec![vec![false; p.len() + 1]; t.len() + 1];
+    dp[0][0] = true;
+    for j in 1..=p.len() {
+        if p[j - 1] == '*' {
+            dp[0][j] = dp[0][j - 1];
+        }
+    }
+    for i in 1..=t.len() {
+        for j in 1..=p.len() {
+            if p[j - 1] == '*' {
+                dp[i][j] = dp[i - 1][j] || dp[i][j - 1];
+            } else if p[j - 1] == '+' || p[j - 1] == t[i - 1] {
+                dp[i][j] = dp[i - 1][j - 1];
+            }
+        }
+    }
+    dp[t.len()][p.len()]
+}
+
 fn binary_op(op: &str, l: &Value, r: &Value) -> Result<Value, String> {
     match op {
         "+" => {
@@ -1630,15 +1867,20 @@ fn binary_op(op: &str, l: &Value, r: &Value) -> Result<Value, String> {
         "/" => {
             let d = to_number(r)?;
             if d == 0.0 {
-                return Err("Division by zero.".to_string());
+                return Err("CX_SY_ZERODIVIDE".to_string());
             }
             let nl = to_number(l)?;
-            Ok(serde_json::json!(nl / d))
+            let q = nl / d;
+            if q.fract() == 0.0 && q >= i64::MIN as f64 && q <= i64::MAX as f64 {
+                Ok(serde_json::json!(q as i64))
+            } else {
+                Ok(serde_json::json!(q))
+            }
         }
         "MOD" => {
             let d = to_number(r)?;
             if d == 0.0 {
-                return Err("MOD by zero.".to_string());
+                return Err("CX_SY_ZERODIVIDE".to_string());
             }
             let nl = to_number(l)?;
             Ok(serde_json::json!((nl as i64) % (d as i64)))
@@ -1646,22 +1888,51 @@ fn binary_op(op: &str, l: &Value, r: &Value) -> Result<Value, String> {
         "DIV" => {
             let d = to_number(r)?;
             if d == 0.0 {
-                return Err("DIV by zero.".to_string());
+                return Err("CX_SY_ZERODIVIDE".to_string());
             }
             let nl = to_number(l)?;
             Ok(serde_json::json!((nl as i64) / (d as i64)))
         }
-        "=" | "==" => Ok(Value::Bool(compare_values(l, r) == std::cmp::Ordering::Equal)),
-        "<>" => Ok(Value::Bool(compare_values(l, r) != std::cmp::Ordering::Equal)),
-        "<" => Ok(Value::Bool(compare_values(l, r) == std::cmp::Ordering::Less)),
-        "<=" => Ok(Value::Bool(compare_values(l, r) != std::cmp::Ordering::Greater)),
-        ">" => Ok(Value::Bool(compare_values(l, r) == std::cmp::Ordering::Greater)),
-        ">=" => Ok(Value::Bool(compare_values(l, r) != std::cmp::Ordering::Less)),
+        "=" | "==" | "EQ" => Ok(Value::Bool(compare_values(l, r) == std::cmp::Ordering::Equal)),
+        "<>" | "NE" => Ok(Value::Bool(compare_values(l, r) != std::cmp::Ordering::Equal)),
+        "<" | "LT" => Ok(Value::Bool(compare_values(l, r) == std::cmp::Ordering::Less)),
+        "<=" | "LE" => Ok(Value::Bool(compare_values(l, r) != std::cmp::Ordering::Greater)),
+        ">" | "GT" => Ok(Value::Bool(compare_values(l, r) == std::cmp::Ordering::Greater)),
+        ">=" | "GE" => Ok(Value::Bool(compare_values(l, r) != std::cmp::Ordering::Less)),
+        "CS" => Ok(Value::Bool(format_value(l).to_uppercase().contains(&format_value(r).to_uppercase()))),
+        "NS" => Ok(Value::Bool(!format_value(l).to_uppercase().contains(&format_value(r).to_uppercase()))),
+        "CP" => Ok(Value::Bool(matches_abap_pattern(&format_value(l), &format_value(r)))),
+        "NP" => Ok(Value::Bool(!matches_abap_pattern(&format_value(l), &format_value(r)))),
+        "CA" => {
+            let ls = format_value(l);
+            let rs = format_value(r);
+            Ok(Value::Bool(ls.chars().any(|c| rs.contains(c))))
+        }
+        "NA" => {
+            let ls = format_value(l);
+            let rs = format_value(r);
+            Ok(Value::Bool(!ls.chars().any(|c| rs.contains(c))))
+        }
+        "CO" => {
+            let ls = format_value(l);
+            let rs = format_value(r);
+            Ok(Value::Bool(ls.chars().all(|c| rs.contains(c))))
+        }
+        "CN" => {
+            let ls = format_value(l);
+            let rs = format_value(r);
+            Ok(Value::Bool(!ls.chars().all(|c| rs.contains(c))))
+        }
         "AND" => Ok(Value::Bool(truthy(l) && truthy(r))),
         "OR" => Ok(Value::Bool(truthy(l) || truthy(r))),
         "&&" | "||" => Ok(Value::String(format!("{}{}", format_value(l), format_value(r)))),
         "IS" => {
-            if r.is_null() {
+            let pred = r.as_str().unwrap_or("").to_ascii_uppercase();
+            if pred == "ASSIGNED" {
+                Ok(Value::Bool(!l.is_null()))
+            } else if pred == "INITIAL" {
+                Ok(Value::Bool(!truthy(l)))
+            } else if r.is_null() {
                 Ok(Value::Bool(l.is_null()))
             } else {
                 Ok(Value::Bool(truthy(l)))

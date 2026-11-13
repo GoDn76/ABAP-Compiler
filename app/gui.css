@@ -24,3 +24,591 @@
 .f4-values{overflow:auto;display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:10px}
 .f4-value{border:1px solid #c7d4e0;background:#fff;text-align:left;padding:8px;cursor:pointer;color:#1d4568}.f4-value:hover{background:#dbeaf7;border-color:#6793bb}
 @media(max-width:900px){.range-row{grid-template-columns:76px 62px minmax(70px,1fr) minmax(70px,1fr) 38px 30px;gap:3px}.sap-form-grid{grid-template-columns:120px minmax(0,1fr)}}
+
+/* =====================================================================
+   COLLAPSIBLE SAP EASY ACCESS & MULTI-FILE CLOUD/REPORT WORKBENCH
+   ===================================================================== */
+.gui-layout.tree-collapsed {
+  grid-template-columns: 36px minmax(0, 1fr) !important;
+}
+.sap-tree-pane.collapsed {
+  width: 36px;
+  min-width: 36px;
+  overflow: hidden;
+  background: linear-gradient(#edf3f9, #dce6f2);
+  cursor: pointer;
+  border-right: 1px solid #94a9bf;
+}
+.sap-tree-pane.collapsed .tree-top {
+  padding: 0 4px;
+  justify-content: center;
+}
+.sap-tree-pane.collapsed #tree-title,
+.sap-tree-pane.collapsed .tree-scroll,
+.sap-tree-pane.collapsed .tree-footer {
+  display: none !important;
+}
+.sap-tree-pane.collapsed .tree-collapsed-rail {
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  padding: 14px 0;
+  gap: 16px;
+  height: calc(100% - 29px);
+  user-select: none;
+}
+.tree-expand-icon {
+  font-size: 13px;
+  color: #27496d;
+  font-weight: bold;
+}
+.vertical-title {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 10px;
+  font-weight: 800;
+  color: #436282;
+  letter-spacing: 1.8px;
+  white-space: nowrap;
+}
+
+/* Screen container when ABAP Editor (SE38) is active */
+.screen-content.screen-editor-active {
+  padding: 0 !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+}
+
+.sap-editor-container {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  background: #cbd8e6;
+  gap: 1px;
+}
+
+/* Middle Column: (SEPARATE for CLOUD and REPORT) File System */
+.sap-vfs-pane {
+  width: 250px;
+  min-width: 210px;
+  max-width: 320px;
+  background: #f4f7fb;
+  border-right: 1px solid #9fb4c7;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.vfs-header {
+  padding: 7px 10px;
+  background: linear-gradient(#f7fafd, #dce7f3);
+  border-bottom: 1px solid #a3b7ca;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.vfs-header strong {
+  font-size: 11px;
+  font-weight: 700;
+  color: #1e3b58;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.vfs-cat-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px 6px;
+  background: #e2ecf6;
+  border-bottom: 1px solid #bdcee0;
+}
+.vfs-cat-btn {
+  flex: 1;
+  font-size: 10px;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #486582;
+  text-align: center;
+  border-radius: 2px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.vfs-cat-btn:hover {
+  background: #d3e2f0;
+}
+.vfs-cat-btn.active {
+  background: #fff;
+  border-color: #9cb2c6;
+  color: #123c64;
+  font-weight: bold;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
+.vfs-actions-bar {
+  display: flex;
+  gap: 4px;
+  padding: 5px 6px;
+  background: #edf3f9;
+  border-bottom: 1px solid #c2d3e3;
+}
+.vfs-actions-bar button {
+  flex: 1;
+  font-size: 10px;
+  padding: 3px 5px;
+  font-weight: 600;
+  border: 1px solid #9cb1c5;
+  background: linear-gradient(#fff, #e4ecf5);
+  color: #214365;
+  border-radius: 2px;
+}
+.vfs-actions-bar button:hover {
+  background: linear-gradient(#f0f7ff, #d3e3f3);
+  border-color: #6a95be;
+}
+.vfs-search-box {
+  padding: 5px 6px;
+  border-bottom: 1px solid #c9d7e5;
+  background: #fafbfd;
+}
+.vfs-search-box input {
+  width: 100%;
+  height: 23px;
+  padding: 0 6px;
+  border: 1px solid #a3b5c7;
+  background: #fff;
+  font-size: 11px;
+  box-sizing: border-box;
+}
+.vfs-file-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.vfs-section-title {
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  padding: 5px 8px;
+  color: #3b5774;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #e2ecf6;
+  border-top: 1px solid #ccd9e7;
+  border-bottom: 1px solid #ccd9e7;
+  margin-top: 4px;
+}
+.vfs-section-title:first-child {
+  margin-top: 0;
+  border-top: 0;
+}
+.vfs-file-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  color: #1f374e;
+  font-size: 11px;
+  text-align: left;
+  width: 100%;
+  box-sizing: border-box;
+}
+.vfs-file-item:hover {
+  background: #e1edf7;
+  border-color: #b3cde4;
+}
+.vfs-file-item.active {
+  background: #cde2f5;
+  border-color: #72a2cf;
+  font-weight: bold;
+  color: #0c3358;
+}
+.vfs-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 2px;
+  letter-spacing: 0.3px;
+}
+.vfs-badge.cloud {
+  background: #ede9fe;
+  color: #5b21b6;
+  border: 1px solid #c4b5fd;
+}
+.vfs-badge.report {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #7dd3fc;
+}
+.vfs-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vfs-file-meta {
+  font-size: 9px;
+  color: #738b9f;
+  margin-left: 2px;
+}
+.vfs-del-btn {
+  opacity: 0.25;
+  border: 0;
+  background: transparent;
+  font-size: 11px;
+  color: #b91c1c;
+  padding: 0 3px;
+  cursor: pointer;
+}
+.vfs-file-item:hover .vfs-del-btn {
+  opacity: 1;
+}
+
+/* Right Main Area: CODE EDITOR (top) & OUTPUT SCROLLABLE (bottom) */
+.sap-editor-stage {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: #edf2f7;
+}
+.sap-editor-top {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 56%;
+  min-height: 220px;
+  background: #ffffff;
+  border-bottom: 1px solid #94a9bf;
+  overflow: hidden;
+}
+.sap-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  background: linear-gradient(#f9fbfe, #e0ebf5);
+  border-bottom: 1px solid #a6bacd;
+  flex-wrap: wrap;
+  min-height: 30px;
+}
+.editor-active-file-pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #fff;
+  border: 1px solid #8ca6be;
+  padding: 2px 7px;
+  border-radius: 2px;
+  font-weight: bold;
+  font-size: 11px;
+  color: #173b5e;
+}
+.editor-status-pill {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 2px;
+  margin-right: 4px;
+}
+.editor-status-pill.saved {
+  color: #15803d;
+  background: #dcfce7;
+  border: 1px solid #86efac;
+}
+.editor-status-pill.unsaved {
+  color: #b45309;
+  background: #fef3c7;
+  border: 1px solid #fde68a;
+}
+.editor-status-pill.saving {
+  color: #2563eb;
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+}
+.editor-body-wrap {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative;
+  background: #fff;
+  overflow: hidden;
+}
+.code-gutter {
+  width: 44px;
+  background: #f1f5f9;
+  border-right: 1px solid #cbd5e1;
+  color: #64748b;
+  font: 12px/1.55 Consolas, "JetBrains Mono", monospace;
+  text-align: right;
+  padding: 8px 6px 8px 0;
+  user-select: none;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.code-editor-input {
+  flex: 1;
+  border: 0;
+  outline: 0;
+  resize: none;
+  padding: 8px 10px;
+  font: 12px/1.55 Consolas, "JetBrains Mono", monospace;
+  color: #0f172a;
+  background: transparent;
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+/* OUTPUT SCROLLABLE (Bottom Pink Block) */
+.sap-output-bottom {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 44%;
+  min-height: 160px;
+  background: #0f172a;
+  color: #e2e8f0;
+  overflow: hidden;
+}
+.sap-output-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 8px;
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+  color: #94a3b8;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+.output-title {
+  font-weight: 700;
+  color: #f1f5f9;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 4px;
+}
+.output-tab-btn {
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  padding: 2px 7px;
+  font-size: 10px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.output-tab-btn:hover {
+  background: #273549;
+  color: #f1f5f9;
+}
+.output-tab-btn.active {
+  background: #334155;
+  color: #38bdf8;
+  font-weight: bold;
+}
+.output-metric-pill {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-weight: 600;
+}
+.output-metric-pill.success {
+  background: #064e3b;
+  color: #34d399;
+  border: 1px solid #059669;
+}
+.output-metric-pill.failed {
+  background: #7f1d1d;
+  color: #f87171;
+  border: 1px solid #b91c1c;
+}
+.output-metric-pill.info {
+  background: #1e3a5f;
+  color: #60a5fa;
+  border: 1px solid #3b82f6;
+}
+.output-scrollable-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font: 12px/1.55 "JetBrains Mono", Consolas, monospace;
+  color: #f8fafc;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #090e17;
+}
+
+/* Horizontal & Vertical Draggable Resizers */
+.sap-horizontal-resizer {
+  width: 5px;
+  background: #cbd8e6;
+  cursor: col-resize;
+  transition: background 0.15s ease;
+  user-select: none;
+  z-index: 10;
+  border-left: 1px solid #9fb4c7;
+  border-right: 1px solid #9fb4c7;
+  flex-shrink: 0;
+}
+.sap-horizontal-resizer:hover, .sap-horizontal-resizer.dragging {
+  background: #2563eb;
+}
+
+.sap-vertical-resizer {
+  height: 6px;
+  background: #1e293b;
+  cursor: row-resize;
+  transition: background 0.15s ease;
+  user-select: none;
+  z-index: 10;
+  border-top: 1px solid #334155;
+  border-bottom: 1px solid #0f172a;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sap-vertical-resizer::after {
+  content: '••••••';
+  color: #64748b;
+  font-size: 8px;
+  letter-spacing: 2px;
+  line-height: 1;
+}
+.sap-vertical-resizer:hover, .sap-vertical-resizer.dragging {
+  background: #0284c7;
+}
+
+.sap-params-resizer {
+  height: 6px;
+  background: #cbd8e6;
+  cursor: row-resize;
+  transition: background 0.15s ease;
+  user-select: none;
+  z-index: 10;
+  border-top: 1px solid #b8cbdf;
+  border-bottom: 1px solid #94a9bf;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sap-params-resizer::after {
+  content: '••••••';
+  color: #475569;
+  font-size: 8px;
+  letter-spacing: 2px;
+  line-height: 1;
+}
+.sap-params-resizer:hover, .sap-params-resizer.dragging {
+  background: #2563eb;
+  border-color: #1d4ed8;
+}
+.sap-params-resizer:hover::after, .sap-params-resizer.dragging::after {
+  color: #ffffff;
+}
+
+#gui-parameters {
+  resize: vertical;
+  min-height: 60px;
+}
+
+/* Collapsible Panel States */
+.sap-pane-toggle-btn {
+  background: transparent;
+  border: 1px solid #475569;
+  color: #94a3b8;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.sap-pane-toggle-btn:hover {
+  background: #334155;
+  color: #f1f5f9;
+}
+
+.sap-output-bottom.collapsed {
+  flex: 0 0 28px !important;
+  min-height: 28px !important;
+  max-height: 28px !important;
+}
+.sap-output-bottom.collapsed .output-scrollable-body {
+  display: none !important;
+}
+
+.sap-vfs-pane.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  overflow: hidden !important;
+}
+.vfs-collapsed-rail {
+  width: 22px;
+  background: #e2e8f0;
+  border-right: 1px solid #94a3b8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: pointer;
+  padding-top: 8px;
+  user-select: none;
+}
+.vfs-collapsed-rail:hover {
+  background: #cbd5e1;
+}
+.vfs-collapsed-rail .rail-icon {
+  font-size: 11px;
+  color: #2563eb;
+  margin-bottom: 8px;
+}
+.vfs-collapsed-rail .vertical-title {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-size: 10px;
+  font-weight: bold;
+  color: #475569;
+  letter-spacing: 1.5px;
+}
+
+/* Fix Diagnostics formatting whitespace bug */
+.output-diagnostics-view, .output-diagnostics-view * {
+  white-space: normal !important;
+}
+.diag-card-item {
+  margin-bottom: 6px;
+  padding: 6px 10px;
+  background: #1e293b;
+  border-radius: 2px;
+  white-space: normal !important;
+}
+.output-scrollable-body .spool-line {
+  color: #e2e8f0;
+}
+.output-scrollable-body .spool-header {
+  color: #38bdf8;
+  font-weight: bold;
+  border-bottom: 1px dashed #334155;
+  padding-bottom: 2px;
+  margin-bottom: 4px;
+}
+.output-scrollable-body .spool-err {
+  color: #f87171;
+  font-weight: bold;
+}
+.output-scrollable-body .spool-ok {
+  color: #4ade80;
+}
