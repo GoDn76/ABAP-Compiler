@@ -20,7 +20,7 @@ services:
       # Rate Limiting (RPS / RPM config):
       # RATE_LIMIT_MAX_REQUESTS: max requests per IP (0 disables rate limiting)
       # RATE_LIMIT_WINDOW_SECS: window in seconds (set to 1 for Requests Per Second, 60 for RPM)
-      - RATE_LIMIT_MAX_REQUESTS=100
+      - RATE_LIMIT_MAX_REQUESTS=300
       - RATE_LIMIT_WINDOW_SECS=60
     extra_hosts:
       - "host.docker.internal:host-gateway"
